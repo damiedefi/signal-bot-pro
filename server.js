@@ -5,19 +5,37 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
+const API_KEY = process.env.TWELVEDATA_API_KEY || '6798ccc308794ec9b2b9413a14f4decb';
+
 const PAIRS = [
-  'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
-  'DOGEUSDT','ADAUSDT','AVAXUSDT','LINKUSDT','DOTUSDT',
-  'MATICUSDT','UNIUSDT','LTCUSDT','ATOMUSDT','NEARUSDT',
-  'FILUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT'
+  { sym: 'BTC',   td: 'BTC/USDT' },
+  { sym: 'ETH',   td: 'ETH/USDT' },
+  { sym: 'BNB',   td: 'BNB/USDT' },
+  { sym: 'SOL',   td: 'SOL/USDT' },
+  { sym: 'XRP',   td: 'XRP/USDT' },
+  { sym: 'DOGE',  td: 'DOGE/USDT' },
+  { sym: 'ADA',   td: 'ADA/USDT' },
+  { sym: 'AVAX',  td: 'AVAX/USDT' },
+  { sym: 'LINK',  td: 'LINK/USDT' },
+  { sym: 'DOT',   td: 'DOT/USDT' },
+  { sym: 'MATIC', td: 'MATIC/USDT' },
+  { sym: 'UNI',   td: 'UNI/USDT' },
+  { sym: 'LTC',   td: 'LTC/USDT' },
+  { sym: 'ATOM',  td: 'ATOM/USDT' },
+  { sym: 'NEAR',  td: 'NEAR/USDT' },
+  { sym: 'FIL',   td: 'FIL/USDT' },
+  { sym: 'ARB',   td: 'ARB/USDT' },
+  { sym: 'OP',    td: 'OP/USDT' },
+  { sym: 'INJ',   td: 'INJ/USDT' },
+  { sym: 'SUI',   td: 'SUI/USDT' }
 ];
 
 const MCAPS = {
-  BTCUSDT:1.32e12, ETHUSDT:382e9,  BNBUSDT:61e9,   SOLUSDT:77e9,
-  XRPUSDT:58e9,    DOGEUSDT:23e9,  ADAUSDT:16e9,   AVAXUSDT:14e9,
-  LINKUSDT:8.5e9,  DOTUSDT:9.8e9,  MATICUSDT:7.1e9, UNIUSDT:5.9e9,
-  LTCUSDT:6.1e9,   ATOMUSDT:3.2e9, NEARUSDT:6.8e9,  FILUSDT:3.1e9,
-  ARBUSDT:3.6e9,   OPUSDT:2.9e9,   INJUSDT:2.4e9,   SUIUSDT:2.1e9
+  BTC:1.32e12, ETH:382e9,  BNB:61e9,   SOL:77e9,
+  XRP:58e9,    DOGE:23e9,  ADA:16e9,   AVAX:14e9,
+  LINK:8.5e9,  DOT:9.8e9,  MATIC:7.1e9, UNI:5.9e9,
+  LTC:6.1e9,   ATOM:3.2e9, NEAR:6.8e9,  FIL:3.1e9,
+  ARB:3.6e9,   OP:2.9e9,   INJ:2.4e9,   SUI:2.1e9
 };
 
 // ── INDICATORS ────────────────────────────────────────────
@@ -74,36 +92,49 @@ function getSignal(rsi, macd, bb, pct7d, vol, mcap) {
   return { swing: 'HOLD', scalp: 'HOLD', conf: 1 };
 }
 
-// ── BINANCE FETCH ─────────────────────────────────────────
-async function binanceFetch(path) {
+// ── TWELVE DATA FETCH ─────────────────────────────────────
+async function tdFetch(path) {
   const { default: fetch } = await import('node-fetch');
-  const res = await fetch('https://api.binance.com' + path, {
+  const res = await fetch('https://api.twelvedata.com' + path, {
     headers: { 'Accept': 'application/json' }
   });
-  if (!res.ok) throw new Error(`Binance ${res.status}: ${res.statusText}`);
+  if (!res.ok) throw new Error(`TwelveData ${res.status}`);
   return res.json();
 }
 
-async function processPair(symbol) {
-  const [klines, ticker] = await Promise.all([
-    binanceFetch(`/api/v3/klines?symbol=${symbol}&interval=1h&limit=50`),
-    binanceFetch(`/api/v3/ticker/24hr?symbol=${symbol}`)
-  ]);
-  const closes  = klines.map(k => parseFloat(k[4]));
-  const rsi     = calcRSI(closes, 14);
-  const macd    = calcMACD(closes);
-  const bb      = calcBB(closes, 20);
-  const price   = parseFloat(ticker.lastPrice);
-  const pct24h  = parseFloat(ticker.priceChangePercent);
-  const vol     = parseFloat(ticker.quoteVolume);
-  const open    = parseFloat(ticker.openPrice);
-  const pct7d   = ((price - open) / open) * 100;
-  const sig     = getSignal(rsi, macd, bb, pct7d, vol, MCAPS[symbol]);
+async function processPair(pair) {
+  // Fetch 1h candles — 50 candles for RSI/MACD/BB
+  const data = await tdFetch(
+    `/time_series?symbol=${pair.td}&interval=1h&outputsize=50&apikey=${API_KEY}&exchange=Binance`
+  );
+
+  if (data.status === 'error') throw new Error(data.message);
+  if (!data.values || data.values.length < 20) throw new Error('Insufficient candles');
+
+  // Twelve Data returns newest first — reverse to oldest first
+  const candles = data.values.slice().reverse();
+  const closes  = candles.map(c => parseFloat(c.close));
+  const price   = closes[closes.length - 1];
+
+  const rsi  = calcRSI(closes, 14);
+  const macd = calcMACD(closes);
+  const bb   = calcBB(closes, 20);
+
+  // 24h and 7d change from candles
+  const price24hAgo = closes.length >= 24 ? closes[closes.length - 24] : closes[0];
+  const price7dAgo  = closes.length >= 168 ? closes[closes.length - 168] : closes[0];
+  const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
+  const pct7d  = ((price - price7dAgo)  / price7dAgo)  * 100;
+
+  const vol  = parseFloat(candles[candles.length - 1].volume) * price;
+  const mcap = MCAPS[pair.sym] || 0;
+  const sig  = getSignal(rsi, macd, bb, pct7d, vol, mcap);
+
+  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'BULL':'BEAR'} BB=${bb.pos} → ${sig.swing}`);
+
   return {
-    sym: symbol.replace('USDT', ''),
-    symbol, price, pct24h, pct7d,
-    vol, mcap: MCAPS[symbol],
-    rsi, macd, bb, ...sig
+    sym: pair.sym, price, pct24h, pct7d,
+    vol, mcap, rsi, macd, bb, ...sig
   };
 }
 
@@ -112,15 +143,20 @@ let cache = { data: null, ts: 0 };
 const CACHE_TTL = 60 * 1000;
 
 async function buildSignals() {
-  console.log('Fetching from Binance...');
-  const results = await Promise.allSettled(PAIRS.map(processPair));
-  const data = results
-    .filter(r => r.status === 'fulfilled')
-    .map(r => r.value);
-  const failed = results.filter(r => r.status === 'rejected').length;
-  console.log(`Scan complete: ${data.length} success, ${failed} failed`);
-  if (data.length === 0) throw new Error('All Binance requests failed — possible geo-block');
-  return data;
+  console.log('Starting Twelve Data scan...');
+  const results = [];
+  for (const pair of PAIRS) {
+    try {
+      const r = await processPair(pair);
+      results.push(r);
+    } catch (e) {
+      console.error(`${pair.sym}: ${e.message}`);
+    }
+    // Twelve Data free tier: 8 requests/minute — space them out
+    await new Promise(r => setTimeout(r, 8000));
+  }
+  console.log(`Scan complete: ${results.length}/20 pairs`);
+  return results;
 }
 
 // ── ROUTES ────────────────────────────────────────────────
@@ -139,23 +175,19 @@ app.get('/api/scan', async (req, res) => {
   }
 });
 
-// Health check — also tests Binance connectivity directly
 app.get('/api/health', async (req, res) => {
   try {
-    const { default: fetch } = await import('node-fetch');
-    const test = await fetch('https://api.binance.com/api/v3/ping', { headers: { 'Accept': 'application/json' } });
-    const binanceOk = test.ok;
+    const data = await tdFetch(`/price?symbol=BTC/USDT&apikey=${API_KEY}&exchange=Binance`);
     res.json({
       ok: true,
-      binance: binanceOk ? 'connected' : 'blocked',
-      binanceStatus: test.status,
-      pairs: PAIRS.length,
-      cacheAge: cache.ts ? Math.round((Date.now() - cache.ts) / 1000) + 's ago' : 'empty'
+      twelvedata: data.price ? 'connected' : 'error',
+      btcPrice: data.price || null,
+      pairs: PAIRS.length
     });
   } catch (e) {
-    res.json({ ok: false, binance: 'error', error: e.message });
+    res.json({ ok: false, twelvedata: 'error', error: e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Signal Bot Pro running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Signal Bot Pro on port ${PORT}`));
