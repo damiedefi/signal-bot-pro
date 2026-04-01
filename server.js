@@ -5,7 +5,7 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
-const API_KEY = process.env.TWELVEDATA_API_KEY || '6798ccc308794ec9b2b9413a14f4decb';
+const API_KEY = process.env.TWELVEDATA_API_KEY || '76d06783102f47c88fb07b712d9acb76';
 
 const PAIRS = [
   { sym: 'BTC',   td: 'BTC/USDT' },
