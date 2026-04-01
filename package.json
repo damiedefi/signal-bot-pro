@@ -1,0 +1,17 @@
+{
+  "name": "signal-bot-pro",
+  "version": "1.0.0",
+  "description": "Crypto trading signal bot backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
