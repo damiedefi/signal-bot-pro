@@ -5,29 +5,27 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
-const API_KEY = process.env.TWELVEDATA_API_KEY || '76d06783102f47c88fb07b712d9acb76';
-
 const PAIRS = [
-  { sym: 'BTC',   td: 'BTC/USDT' },
-  { sym: 'ETH',   td: 'ETH/USDT' },
-  { sym: 'BNB',   td: 'BNB/USDT' },
-  { sym: 'SOL',   td: 'SOL/USDT' },
-  { sym: 'XRP',   td: 'XRP/USDT' },
-  { sym: 'DOGE',  td: 'DOGE/USDT' },
-  { sym: 'ADA',   td: 'ADA/USDT' },
-  { sym: 'AVAX',  td: 'AVAX/USDT' },
-  { sym: 'LINK',  td: 'LINK/USDT' },
-  { sym: 'DOT',   td: 'DOT/USDT' },
-  { sym: 'MATIC', td: 'MATIC/USDT' },
-  { sym: 'UNI',   td: 'UNI/USDT' },
-  { sym: 'LTC',   td: 'LTC/USDT' },
-  { sym: 'ATOM',  td: 'ATOM/USDT' },
-  { sym: 'NEAR',  td: 'NEAR/USDT' },
-  { sym: 'FIL',   td: 'FIL/USDT' },
-  { sym: 'ARB',   td: 'ARB/USDT' },
-  { sym: 'OP',    td: 'OP/USDT' },
-  { sym: 'INJ',   td: 'INJ/USDT' },
-  { sym: 'SUI',   td: 'SUI/USDT' }
+  { sym: 'BTC',   cc: 'BTC' },
+  { sym: 'ETH',   cc: 'ETH' },
+  { sym: 'BNB',   cc: 'BNB' },
+  { sym: 'SOL',   cc: 'SOL' },
+  { sym: 'XRP',   cc: 'XRP' },
+  { sym: 'DOGE',  cc: 'DOGE' },
+  { sym: 'ADA',   cc: 'ADA' },
+  { sym: 'AVAX',  cc: 'AVAX' },
+  { sym: 'LINK',  cc: 'LINK' },
+  { sym: 'DOT',   cc: 'DOT' },
+  { sym: 'MATIC', cc: 'MATIC' },
+  { sym: 'UNI',   cc: 'UNI' },
+  { sym: 'LTC',   cc: 'LTC' },
+  { sym: 'ATOM',  cc: 'ATOM' },
+  { sym: 'NEAR',  cc: 'NEAR' },
+  { sym: 'FIL',   cc: 'FIL' },
+  { sym: 'ARB',   cc: 'ARB' },
+  { sym: 'OP',    cc: 'OP' },
+  { sym: 'INJ',   cc: 'INJ' },
+  { sym: 'SUI',   cc: 'SUI' }
 ];
 
 const MCAPS = {
@@ -92,43 +90,44 @@ function getSignal(rsi, macd, bb, pct7d, vol, mcap) {
   return { swing: 'HOLD', scalp: 'HOLD', conf: 1 };
 }
 
-// ── TWELVE DATA FETCH ─────────────────────────────────────
-async function tdFetch(path) {
+// ── CRYPTOCOMPARE FETCH — no API key needed ───────────────
+async function ccFetch(path) {
   const { default: fetch } = await import('node-fetch');
-  const res = await fetch('https://api.twelvedata.com' + path, {
+  const res = await fetch('https://min-api.cryptocompare.com' + path, {
     headers: { 'Accept': 'application/json' }
   });
-  if (!res.ok) throw new Error(`TwelveData ${res.status}`);
+  if (!res.ok) throw new Error(`CryptoCompare ${res.status}`);
   return res.json();
 }
 
 async function processPair(pair) {
-  // Fetch 1h candles — 50 candles for RSI/MACD/BB
-  const data = await tdFetch(
-    `/time_series?symbol=${pair.td}&interval=1h&outputsize=50&apikey=${API_KEY}&exchange=Binance`
+  // Fetch 50 hourly candles — real OHLCV data, no API key required
+  const data = await ccFetch(
+    `/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=50`
   );
+  if (data.Response !== 'Success') throw new Error(data.Message || 'API error');
+  const candles = data.Data.Data;
+  if (!candles || candles.length < 20) throw new Error('Insufficient candles');
 
-  if (data.status === 'error') throw new Error(data.message);
-  if (!data.values || data.values.length < 20) throw new Error('Insufficient candles');
-
-  // Twelve Data returns newest first — reverse to oldest first
-  const candles = data.values.slice().reverse();
-  const closes  = candles.map(c => parseFloat(c.close));
-  const price   = closes[closes.length - 1];
+  const closes = candles.map(c => c.close);
+  const price  = closes[closes.length - 1];
 
   const rsi  = calcRSI(closes, 14);
   const macd = calcMACD(closes);
   const bb   = calcBB(closes, 20);
 
-  // 24h and 7d change from candles
+  // 24h and 7d change
   const price24hAgo = closes.length >= 24 ? closes[closes.length - 24] : closes[0];
-  const price7dAgo  = closes.length >= 168 ? closes[closes.length - 168] : closes[0];
+  const price7dAgo  = closes.length >= 48  ? closes[0] : closes[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
   const pct7d  = ((price - price7dAgo)  / price7dAgo)  * 100;
 
-  const vol  = parseFloat(candles[candles.length - 1].volume) * price;
+  // Volume from last candle (in USD)
+  const lastCandle = candles[candles.length - 1];
+  const vol = lastCandle.volumeto || 0;
   const mcap = MCAPS[pair.sym] || 0;
-  const sig  = getSignal(rsi, macd, bb, pct7d, vol, mcap);
+
+  const sig = getSignal(rsi, macd, bb, pct7d, vol, mcap);
 
   console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'BULL':'BEAR'} BB=${bb.pos} → ${sig.swing}`);
 
@@ -143,20 +142,16 @@ let cache = { data: null, ts: 0 };
 const CACHE_TTL = 60 * 1000;
 
 async function buildSignals() {
-  console.log('Starting Twelve Data scan...');
-  const results = [];
-  for (const pair of PAIRS) {
-    try {
-      const r = await processPair(pair);
-      results.push(r);
-    } catch (e) {
-      console.error(`${pair.sym}: ${e.message}`);
-    }
-    // Twelve Data free tier: 8 requests/minute — space them out
-    await new Promise(r => setTimeout(r, 8000));
-  }
-  console.log(`Scan complete: ${results.length}/20 pairs`);
-  return results;
+  console.log('Starting CryptoCompare scan...');
+  // CryptoCompare free tier is generous — run all in parallel
+  const results = await Promise.allSettled(PAIRS.map(processPair));
+  const data = results
+    .filter(r => r.status === 'fulfilled')
+    .map(r => r.value);
+  const failed = results.filter(r => r.status === 'rejected').length;
+  console.log(`Scan complete: ${data.length} success, ${failed} failed`);
+  if (data.length === 0) throw new Error('All CryptoCompare requests failed');
+  return data;
 }
 
 // ── ROUTES ────────────────────────────────────────────────
@@ -177,17 +172,18 @@ app.get('/api/scan', async (req, res) => {
 
 app.get('/api/health', async (req, res) => {
   try {
-    const data = await tdFetch(`/price?symbol=BTC/USDT&apikey=${API_KEY}&exchange=Binance`);
+    const data = await ccFetch('/data/price?fsym=BTC&tsyms=USDT');
     res.json({
       ok: true,
-      twelvedata: data.price ? 'connected' : 'error',
-      btcPrice: data.price || null,
+      cryptocompare: data.USDT ? 'connected' : 'error',
+      btcPrice: data.USDT ? '$' + data.USDT.toLocaleString() : null,
+      apiKey: 'none required',
       pairs: PAIRS.length
     });
   } catch (e) {
-    res.json({ ok: false, twelvedata: 'error', error: e.message });
+    res.json({ ok: false, cryptocompare: 'error', error: e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Signal Bot Pro on port ${PORT}`));
+app.listen(PORT, () => console.log(`Signal Bot Pro running on port ${PORT}`));
