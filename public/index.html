@@ -8,27 +8,42 @@
 *{box-sizing:border-box;margin:0;padding:0;}
 body{background:#0d0d0d;color:#e0e0e0;font-family:'Courier New',monospace;font-size:12px;}
 .dash{padding:10px;min-height:100vh;}
+
+/* TOP BAR */
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:#111;border:0.5px solid #222;border-radius:8px;margin-bottom:8px;}
 .logo{font-size:14px;font-weight:600;color:#fff;}
 .live-dot{width:6px;height:6px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;animation:pulse 2s infinite;}
 @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
 .badge{font-size:10px;padding:2px 7px;border-radius:4px;background:#1a3325;color:#4ade80;}
+
+/* STATS */
 .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-bottom:8px;}
 .sc{background:#111;border:0.5px solid #222;border-radius:7px;padding:9px 11px;}
 .sc-label{font-size:10px;color:#444;margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;}
 .sc-val{font-size:19px;font-weight:600;}
 .g{color:#4ade80;}.r{color:#f87171;}.y{color:#fbbf24;}.w{color:#fff;}.muted{color:#555;}
-.grid{display:grid;grid-template-columns:1fr 300px;gap:8px;}
-@media(max-width:900px){.grid{grid-template-columns:1fr;}.stats{grid-template-columns:repeat(3,1fr);}}
+
+/* TICKER */
+.ticker{display:flex;gap:14px;padding:5px 11px;overflow-x:auto;background:#0d0d0d;margin-bottom:8px;border:0.5px solid #1a1a1a;border-radius:7px;}
+.tick{display:flex;gap:4px;align-items:center;white-space:nowrap;font-size:11px;}
+.tn{color:#444;}.tp{color:#bbb;}
+
+/* MAIN LAYOUT — table + signals side by side */
+.main-layout{display:grid;grid-template-columns:1fr 360px;gap:8px;}
+@media(max-width:1100px){.main-layout{grid-template-columns:1fr;}}
+
+/* PANELS */
 .panel{background:#111;border:0.5px solid #222;border-radius:7px;overflow:hidden;}
 .ph{display:flex;align-items:center;justify-content:space-between;padding:7px 11px;border-bottom:0.5px solid #1e1e1e;background:#0f0f0f;}
 .pt{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.4px;}
+
+/* TABLE */
 .filters{display:flex;gap:5px;padding:7px 11px;border-bottom:0.5px solid #1a1a1a;background:#0f0f0f;flex-wrap:wrap;}
 .fb{font-size:10px;padding:2px 7px;border-radius:4px;border:0.5px solid #222;background:transparent;color:#555;cursor:pointer;}
 .fb.on{background:#1a3325;color:#4ade80;border-color:#2a4a35;}
 .fb.on-r{background:#331a1a;color:#f87171;border-color:#4a2a2a;}
-.tw{overflow-x:auto;max-height:420px;overflow-y:auto;}
-table{width:100%;border-collapse:collapse;min-width:680px;}
+.tw{overflow-x:auto;max-height:500px;overflow-y:auto;}
+table{width:100%;border-collapse:collapse;min-width:600px;}
 th{font-size:10px;color:#444;text-align:left;padding:5px 9px;border-bottom:0.5px solid #1a1a1a;background:#0f0f0f;position:sticky;top:0;white-space:nowrap;}
 td{padding:6px 9px;border-bottom:0.5px solid #161616;color:#bbb;white-space:nowrap;}
 tr:hover td{background:#161616;}
@@ -37,38 +52,68 @@ tr:hover td{background:#161616;}
 .sell{background:#331a1a;color:#f87171;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600;}
 .watch{background:#2a2a14;color:#fbbf24;padding:1px 6px;border-radius:3px;font-size:10px;}
 .hold{color:#2a2a2a;font-size:10px;}
-.side{display:flex;flex-direction:column;gap:8px;}
-.alist{max-height:210px;overflow-y:auto;}
-.ai{padding:7px 11px;border-bottom:0.5px solid #161616;}
-.ai:last-child{border-bottom:none;}
-.at{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;}
-.ap{font-weight:600;color:#fff;font-size:12px;}
-.atime{font-size:10px;color:#333;}
-.ad{font-size:11px;color:#444;}
-.llist{max-height:180px;overflow-y:auto;}
+
+/* RIGHT COLUMN */
+.right-col{display:flex;flex-direction:column;gap:8px;}
+
+/* SIGNAL CARDS */
+.signals-panel{display:flex;flex-direction:column;gap:0;}
+.signal-card{padding:12px;border-bottom:0.5px solid #1a1a1a;transition:background .15s;}
+.signal-card:last-child{border-bottom:none;}
+.signal-card:hover{background:#161616;}
+
+.sc-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.sc-pair{font-size:14px;font-weight:600;color:#fff;}
+.sc-dir-buy{background:#1a3325;color:#4ade80;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;}
+.sc-dir-sell{background:#331a1a;color:#f87171;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;}
+
+.sc-scores{display:flex;gap:8px;margin-bottom:10px;align-items:center;}
+.score-circle{width:44px;height:44px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:2px solid;}
+.score-circle.high{border-color:#4ade80;background:#0f2a1a;}
+.score-circle.mid{border-color:#fbbf24;background:#2a2000;}
+.score-num{font-size:15px;font-weight:600;line-height:1;}
+.score-label{font-size:8px;color:#555;margin-top:1px;}
+.conf-pill{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;}
+.conf-pill.high{background:#1a3325;color:#4ade80;}
+.conf-pill.mid{background:#2a2a14;color:#fbbf24;}
+.style-pill{font-size:10px;padding:2px 7px;border-radius:4px;background:#1a1a2a;color:#60a5fa;}
+
+.sc-fields{display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;margin-bottom:8px;}
+.sc-field{display:flex;flex-direction:column;gap:1px;}
+.sc-field-label{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.3px;}
+.sc-field-val{font-size:11px;color:#ccc;font-weight:500;}
+.sc-field-val.green{color:#4ade80;}
+.sc-field-val.red{color:#f87171;}
+.sc-field-val.yellow{color:#fbbf24;}
+
+.sc-reasoning{font-size:10px;color:#555;line-height:1.5;padding:6px 8px;background:#0a0a0a;border-radius:4px;border-left:2px solid #222;}
+
+.no-signals{padding:20px;text-align:center;color:#2a2a2a;font-size:11px;}
+
+/* BOT LOG */
+.llist{max-height:150px;overflow-y:auto;}
 .li{padding:4px 11px;border-bottom:0.5px solid #161616;display:flex;gap:8px;font-size:11px;}
 .lt{color:#2a2a2a;min-width:52px;}
 .lbuy{color:#4ade80;}.lsell{color:#f87171;}.linfo{color:#3b82f6;}.lm{color:#555;}.lerr{color:#f59e0b;}
+
 .scan-btn{font-size:10px;padding:3px 9px;border-radius:4px;border:0.5px solid #2a4a35;background:#1a3325;color:#4ade80;cursor:pointer;}
 .scan-btn:disabled{opacity:.4;cursor:default;}
-.ticker{display:flex;gap:14px;padding:5px 11px;overflow-x:auto;background:#0d0d0d;margin-bottom:8px;border:0.5px solid #1a1a1a;border-radius:7px;}
-.tick{display:flex;gap:4px;align-items:center;white-space:nowrap;font-size:11px;}
-.tn{color:#444;}.tp{color:#bbb;}
 .placeholder{color:#2a2a2a;font-size:11px;padding:20px;text-align:center;}
 </style>
 </head>
 <body>
 <div class="dash">
+
   <div class="topbar">
     <div style="display:flex;align-items:center;gap:8px;">
       <span class="logo">Signal Bot Pro</span>
-      <span class="badge"><span class="live-dot"></span>Binance Live</span>
-      <span style="font-size:10px;color:#333;">20 pairs · RSI / MACD / BB · Real Klines</span>
+      <span class="badge"><span class="live-dot"></span>Live</span>
+      <span style="font-size:10px;color:#333;">20 pairs · RSI / MACD / BB · Score /10</span>
     </div>
     <span style="font-size:10px;color:#333;" id="clock">--:--:-- UTC</span>
   </div>
 
-  <div class="ticker" id="ticker"><span style="color:#333;font-size:11px;">Loading...</span></div>
+  <div class="ticker" id="ticker"><span style="color:#333;font-size:11px;">Loading ticker...</span></div>
 
   <div class="stats">
     <div class="sc"><div class="sc-label">Pairs Tracked</div><div class="sc-val w" id="s-pairs">20</div></div>
@@ -78,44 +123,53 @@ tr:hover td{background:#161616;}
     <div class="sc"><div class="sc-label">Next Scan</div><div class="sc-val w" id="s-next">—</div></div>
   </div>
 
-  <div class="grid">
-    <div class="panel">
-      <div class="ph">
-        <span class="pt">All Pairs · Signal Table</span>
-        <button class="scan-btn" id="scan-btn">⟳ Scan Now</button>
-      </div>
-      <div class="filters">
-        <button class="fb on" data-f="all">All</button>
-        <button class="fb" data-f="buy">Buy Only</button>
-        <button class="fb" data-f="sell">Sell Only</button>
-        <button class="fb" data-f="hc">★★★ Only</button>
-        <button class="fb" data-f="swing">Swing</button>
-        <button class="fb" data-f="scalp">Scalp</button>
-      </div>
-      <div class="tw">
-        <table>
-          <thead><tr>
-            <th>Pair</th><th>Price</th><th>24h %</th><th>Volume</th><th>Mkt Cap</th>
-            <th>RSI(14)</th><th>MACD</th><th>BB Pos</th><th>Swing</th><th>Scalp</th><th>Conf</th>
-          </tr></thead>
-          <tbody id="tbody"><tr><td colspan="11" class="placeholder">Connecting to server...</td></tr></tbody>
-        </table>
-      </div>
-    </div>
+  <div class="main-layout">
 
-    <div class="side">
+    <!-- LEFT: Signal Table -->
+    <div style="display:flex;flex-direction:column;gap:8px;">
       <div class="panel">
         <div class="ph">
-          <span class="pt">Signal Alerts</span>
-          <span style="font-size:10px;color:#333;" id="alert-count">0 alerts</span>
+          <span class="pt">All Pairs · Signal Table</span>
+          <button class="scan-btn" id="scan-btn">⟳ Scan Now</button>
         </div>
-        <div class="alist" id="alist"><div class="ai"><span class="placeholder">Waiting...</span></div></div>
+        <div class="filters">
+          <button class="fb on" data-f="all">All</button>
+          <button class="fb" data-f="buy">Buy Only</button>
+          <button class="fb" data-f="sell">Sell Only</button>
+          <button class="fb" data-f="hc">★★★ Only</button>
+          <button class="fb" data-f="swing">Swing</button>
+          <button class="fb" data-f="scalp">Scalp</button>
+        </div>
+        <div class="tw">
+          <table>
+            <thead><tr>
+              <th>Pair</th><th>Price</th><th>24h%</th><th>RSI</th><th>MACD</th><th>BB</th><th>Score</th><th>Swing</th><th>Scalp</th><th>Conf</th>
+            </tr></thead>
+            <tbody id="tbody"><tr><td colspan="10" class="placeholder">Connecting to server...</td></tr></tbody>
+          </table>
+        </div>
       </div>
+
+      <!-- BOT LOG -->
       <div class="panel">
         <div class="ph"><span class="pt">Bot Log</span></div>
         <div class="llist" id="llist"></div>
       </div>
     </div>
+
+    <!-- RIGHT: Signal Cards (★★★ only) -->
+    <div class="right-col">
+      <div class="panel">
+        <div class="ph">
+          <span class="pt">★★★ High Confidence Signals</span>
+          <span style="font-size:10px;color:#333;" id="hc-count">0 signals</span>
+        </div>
+        <div class="signals-panel" id="signals-panel">
+          <div class="no-signals">No high confidence signals yet — run a scan</div>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -129,6 +183,120 @@ function log(msg, type='info'){
   renderLog();
 }
 
+/* ── SIGNAL SCORING ─────────────────────────────────────── */
+function calcScore(s) {
+  // Score out of 10 based on indicator confluence
+  let score = 0;
+
+  // RSI component (0-3 points)
+  if(s.rsi < 30) score += 3;
+  else if(s.rsi < 38) score += 2;
+  else if(s.rsi < 45) score += 1;
+  else if(s.rsi > 70) score -= 1; // penalise overbought for buys
+
+  // MACD component (0-2 points)
+  if(s.macd && s.macd.bull) score += 2;
+
+  // BB component (0-2 points)
+  if(s.bb) {
+    if(s.bb.pos === 'lower') score += 2;
+    else if(s.bb.pos === 'mid') score += 1;
+  }
+
+  // 7d trend component (0-2 points)
+  if(typeof s.pct7d === 'number') {
+    if(s.pct7d > 5) score += 2;
+    else if(s.pct7d > 2) score += 1;
+    else if(s.pct7d < -5) score -= 1;
+  }
+
+  // Volume component (0-1 point)
+  if(s.vol && s.mcap && (s.vol/s.mcap) > 0.03) score += 1;
+
+  // Confidence boost
+  if(s.conf === 3) score += 1;
+
+  // For SELL signals — invert the scoring logic
+  if(s.swing === 'SELL' || s.scalp === 'SELL') {
+    score = 10 - score;
+  }
+
+  return Math.max(1, Math.min(10, score));
+}
+
+function calcConfPct(s) {
+  // Confidence percentage based on how many indicators agree
+  let agree = 0, total = 4;
+  const dir = (s.swing === 'BUY' || s.scalp === 'BUY') ? 'bull' : 'bear';
+  if(dir === 'bull') {
+    if(s.rsi < 45) agree++;
+    if(s.macd && s.macd.bull) agree++;
+    if(s.bb && (s.bb.pos === 'lower' || s.bb.pos === 'mid')) agree++;
+    if(typeof s.pct7d === 'number' && s.pct7d > 0) agree++;
+  } else {
+    if(s.rsi > 55) agree++;
+    if(s.macd && !s.macd.bull) agree++;
+    if(s.bb && (s.bb.pos === 'upper' || s.bb.pos === 'mid')) agree++;
+    if(typeof s.pct7d === 'number' && s.pct7d < 0) agree++;
+  }
+  return Math.round((agree / total) * 100);
+}
+
+function calcEntry(s) {
+  return s.price;
+}
+
+function calcSL(s, dir) {
+  if(!s.price) return null;
+  // ATR approximation using BB width
+  const atr = s.price * 0.025; // ~2.5% as proxy
+  return dir === 'BUY'
+    ? +(s.price - atr * 1.5).toFixed(4)
+    : +(s.price + atr * 1.5).toFixed(4);
+}
+
+function calcTP(s, dir) {
+  if(!s.price) return { tp1: null, tp2: null };
+  const atr = s.price * 0.025;
+  if(dir === 'BUY') {
+    return {
+      tp1: +(s.price + atr * 2).toFixed(4),
+      tp2: +(s.price + atr * 4).toFixed(4)
+    };
+  } else {
+    return {
+      tp1: +(s.price - atr * 2).toFixed(4),
+      tp2: +(s.price - atr * 4).toFixed(4)
+    };
+  }
+}
+
+function calcLeverage(s) {
+  const confPct = calcConfPct(s);
+  if(confPct >= 90) return '3x–5x';
+  if(confPct >= 75) return '2x–3x';
+  if(confPct >= 60) return '1x–2x';
+  return '1x (spot)';
+}
+
+function buildReasoning(s, dir, score, confPct) {
+  const parts = [];
+  if(dir === 'BUY') {
+    if(s.rsi < 40) parts.push(`RSI at ${s.rsi} — oversold territory`);
+    if(s.macd && s.macd.bull) parts.push('MACD histogram bullish');
+    if(s.bb && s.bb.pos === 'lower') parts.push(`price at BB lower band (${s.bb.pct}%)`);
+    if(typeof s.pct7d === 'number' && s.pct7d > 2) parts.push(`7d trend positive (+${s.pct7d.toFixed(1)}%)`);
+  } else {
+    if(s.rsi > 60) parts.push(`RSI at ${s.rsi} — overbought territory`);
+    if(s.macd && !s.macd.bull) parts.push('MACD histogram bearish');
+    if(s.bb && s.bb.pos === 'upper') parts.push(`price at BB upper band (${s.bb.pct}%)`);
+    if(typeof s.pct7d === 'number' && s.pct7d < -2) parts.push(`7d trend negative (${s.pct7d.toFixed(1)}%)`);
+  }
+  if(!parts.length) parts.push('Multiple indicators in confluence');
+  return parts.join(' · ') + `. Signal score ${score}/10, confidence ${confPct}%.`;
+}
+
+/* ── FORMATTING ─────────────────────────────────────────── */
 function fPrice(p){
   if(!p) return '--';
   if(p>=1000) return '$'+p.toLocaleString('en',{maximumFractionDigits:0});
@@ -140,12 +308,6 @@ function fVol(v){
   if(!v) return '--';
   if(v>=1e9) return '$'+(v/1e9).toFixed(1)+'B';
   if(v>=1e6) return '$'+(v/1e6).toFixed(0)+'M';
-  return '$'+(v/1e3).toFixed(0)+'K';
-}
-function fMcap(m){
-  if(!m) return '--';
-  if(m>=1e12) return '$'+(m/1e12).toFixed(2)+'T';
-  if(m>=1e9)  return '$'+(m/1e9).toFixed(1)+'B';
   return '--';
 }
 function badge(s){
@@ -158,6 +320,7 @@ function stars(c){
   return `<span class="${c===3?'g':c===2?'y':'muted'}">${'★'.repeat(c)}${'☆'.repeat(3-c)}</span>`;
 }
 
+/* ── RENDER TABLE ───────────────────────────────────────── */
 function renderTable(){
   let rows=[...signals];
   if(activeFilter==='buy')   rows=rows.filter(s=>s.swing==='BUY'||s.scalp==='BUY');
@@ -166,39 +329,108 @@ function renderTable(){
   if(activeFilter==='swing') rows=rows.filter(s=>s.swing==='BUY'||s.swing==='SELL');
   if(activeFilter==='scalp') rows=rows.filter(s=>s.scalp==='BUY'||s.scalp==='SELL');
   const tbody=document.getElementById('tbody');
-  if(!rows.length){ tbody.innerHTML='<tr><td colspan="11" class="placeholder">No signals match filter</td></tr>'; return; }
+  if(!rows.length){ tbody.innerHTML='<tr><td colspan="10" class="placeholder">No signals match filter</td></tr>'; return; }
   tbody.innerHTML=rows.map(s=>{
-    const pc=s.pct24h>=0?'g':'r', sign=s.pct24h>=0?'+':'';
     const rsiCls=s.rsi<40?'g':s.rsi>60?'r':'muted';
-    const macdTxt=s.macd.bull?'▲ BULL':'▼ BEAR', macdCls=s.macd.bull?'g':'r';
-    const bbTxt=s.bb.pos==='upper'?`▲ UPPER ${s.bb.pct}%`:s.bb.pos==='lower'?`▼ LOWER ${s.bb.pct}%`:`◈ MID ${s.bb.pct}%`;
+    const macdTxt=s.macd&&s.macd.bull?'▲ BULL':'▼ BEAR';
+    const macdCls=s.macd&&s.macd.bull?'g':'r';
+    const bbTxt=s.bb?s.bb.pos==='upper'?`▲${s.bb.pct}%`:s.bb.pos==='lower'?`▼${s.bb.pct}%`:`◈${s.bb.pct}%`:'--';
+    const score=calcScore(s);
+    const scoreCls=score>=8?'g':score>=6?'y':'muted';
     return `<tr>
       <td class="pair">${s.sym}/USDT</td>
       <td style="font-family:monospace">${fPrice(s.price)}</td>
-      <td class="${pc}">${sign}${s.pct24h.toFixed(2)}%</td>
-      <td>${fVol(s.vol)}</td><td>${fMcap(s.mcap)}</td>
+      <td class="${s.pct24h>=0?'g':'r'}">${s.pct24h>=0?'+':''}${s.pct24h.toFixed(2)}%</td>
       <td class="${rsiCls}">${s.rsi}</td>
       <td class="${macdCls}">${macdTxt}</td>
       <td class="muted">${bbTxt}</td>
-      <td>${badge(s.swing)}</td><td>${badge(s.scalp)}</td><td>${stars(s.conf)}</td>
+      <td class="${scoreCls}">${score}/10</td>
+      <td>${badge(s.swing)}</td>
+      <td>${badge(s.scalp)}</td>
+      <td>${stars(s.conf)}</td>
     </tr>`;
   }).join('');
 }
 
-function renderAlerts(){
-  const el=document.getElementById('alist');
-  if(!alerts.length){ el.innerHTML='<div class="ai"><span class="placeholder">No signals yet</span></div>'; return; }
-  el.innerHTML=alerts.slice(0,30).map(a=>{
-    const dc=a.dir==='BUY'?'buy':'sell';
-    return `<div class="ai">
-      <div class="at"><span class="ap">${a.sym}/USDT</span><span class="${dc}">${a.dir}</span></div>
-      <div style="display:flex;justify-content:space-between;margin-top:2px;">
-        <span class="ad">${a.style} · ${'★'.repeat(a.conf)}${'☆'.repeat(3-a.conf)} · RSI ${a.rsi}</span>
-        <span class="atime">${a.time} UTC</span>
+/* ── RENDER SIGNAL CARDS ────────────────────────────────── */
+function renderSignalCards(){
+  const hcSignals = signals.filter(s => s.conf === 3 && (s.swing==='BUY'||s.swing==='SELL'||s.scalp==='BUY'||s.scalp==='SELL'));
+  const panel = document.getElementById('signals-panel');
+  document.getElementById('hc-count').textContent = hcSignals.length + ' signals';
+
+  if(!hcSignals.length){
+    panel.innerHTML = '<div class="no-signals">No ★★★ signals yet — waiting for next scan</div>';
+    return;
+  }
+
+  panel.innerHTML = hcSignals.map(s => {
+    const dir = (s.swing==='BUY'||s.scalp==='BUY') ? 'BUY' : 'SELL';
+    const style = s.swing===dir ? 'Swing' : 'Scalp';
+    const score = calcScore(s);
+    const confPct = calcConfPct(s);
+    const sl = calcSL(s, dir);
+    const { tp1, tp2 } = calcTP(s, dir);
+    const lev = calcLeverage(s);
+    const inv = dir==='BUY'
+      ? `Close below ${fPrice(sl)} invalidates`
+      : `Close above ${fPrice(sl)} invalidates`;
+    const reasoning = buildReasoning(s, dir, score, confPct);
+    const scoreClass = score >= 8 ? 'high' : 'mid';
+    const confClass = confPct >= 75 ? 'high' : 'mid';
+    const dirClass = dir==='BUY' ? 'sc-dir-buy' : 'sc-dir-sell';
+
+    return `<div class="signal-card">
+      <div class="sc-top">
+        <span class="sc-pair">${s.sym}/USDT</span>
+        <span class="${dirClass}">${dir}</span>
       </div>
+
+      <div class="sc-scores">
+        <div class="score-circle ${scoreClass}">
+          <span class="score-num ${scoreClass==='high'?'g':'y'}">${score}</span>
+          <span class="score-label">/10</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <span class="conf-pill ${confClass}">${confPct}% confidence</span>
+          <span class="style-pill">${style} · ★★★</span>
+        </div>
+      </div>
+
+      <div class="sc-fields">
+        <div class="sc-field">
+          <span class="sc-field-label">Entry</span>
+          <span class="sc-field-val">${fPrice(s.price)}</span>
+        </div>
+        <div class="sc-field">
+          <span class="sc-field-label">Stop Loss</span>
+          <span class="sc-field-val red">${fPrice(sl)}</span>
+        </div>
+        <div class="sc-field">
+          <span class="sc-field-label">TP1</span>
+          <span class="sc-field-val green">${fPrice(tp1)}</span>
+        </div>
+        <div class="sc-field">
+          <span class="sc-field-label">TP2</span>
+          <span class="sc-field-val green">${fPrice(tp2)}</span>
+        </div>
+        <div class="sc-field">
+          <span class="sc-field-label">Leverage</span>
+          <span class="sc-field-val yellow">${lev}</span>
+        </div>
+        <div class="sc-field">
+          <span class="sc-field-label">RSI / BB</span>
+          <span class="sc-field-val">${s.rsi} · ${s.bb?s.bb.pos:'--'}</span>
+        </div>
+      </div>
+
+      <div class="sc-field" style="margin-bottom:6px;">
+        <span class="sc-field-label">Invalidation</span>
+        <span class="sc-field-val" style="font-size:10px;color:#888;">${inv}</span>
+      </div>
+
+      <div class="sc-reasoning">${reasoning}</div>
     </div>`;
   }).join('');
-  document.getElementById('alert-count').textContent=alerts.length+' alerts';
 }
 
 function renderLog(){
@@ -215,32 +447,31 @@ function renderTicker(){
   }).join('')||'<span style="color:#333;font-size:11px;">No data</span>';
 }
 
+/* ── SCAN ───────────────────────────────────────────────── */
 async function runScan(){
   if(scanning) return;
   scanning=true;
   const btn=document.getElementById('scan-btn');
   btn.disabled=true; btn.textContent='⟳ Scanning...';
-  document.getElementById('tbody').innerHTML='<tr><td colspan="11" class="placeholder">Fetching from Binance...</td></tr>';
   log('Requesting data from server...','info');
 
   try{
     const res = await fetch('/api/scan');
     const json = await res.json();
-    if(!json.ok) throw new Error(json.error || 'Server error');
+    if(!json.ok) throw new Error(json.error||'Server error');
 
-    signals = json.data;
+    signals=json.data;
     let buys=0, sells=0, hc=0;
     signals.forEach(s=>{
       if(s.swing==='BUY'||s.scalp==='BUY'){ buys++; if(s.conf===3) hc++; }
       if(s.swing==='SELL'||s.scalp==='SELL') sells++;
-      if(['BUY','SELL'].includes(s.swing)||['BUY','SELL'].includes(s.scalp)){
+      if(s.conf===3 && (s.swing==='BUY'||s.swing==='SELL'||s.scalp==='BUY'||s.scalp==='SELL')){
         const dir=(s.swing==='BUY'||s.scalp==='BUY')?'BUY':'SELL';
-        const style=s.swing===dir?'Swing':'Scalp';
-        alerts.unshift({sym:s.sym, dir, style, conf:s.conf, time:ts(), rsi:s.rsi});
-        log(`${style.toUpperCase()} ${dir}: ${s.sym} — RSI ${s.rsi} · MACD ${s.macd.bull?'BULL':'BEAR'} · BB ${s.bb.pos.toUpperCase()}`, dir.toLowerCase());
+        const score=calcScore(s);
+        const confPct=calcConfPct(s);
+        log(`★★★ ${dir}: ${s.sym} — Score ${score}/10 · Conf ${confPct}%`, dir.toLowerCase());
       }
     });
-    if(alerts.length>60) alerts=alerts.slice(0,60);
 
     document.getElementById('s-buy').textContent=buys;
     document.getElementById('s-sell').textContent=sells;
@@ -248,11 +479,10 @@ async function runScan(){
     document.getElementById('s-pairs').textContent=signals.length;
     log(`Scan complete — ${buys} buy · ${sells} sell · ${hc} ★★★`,'info');
 
-    renderTable(); renderAlerts(); renderTicker();
+    renderTable(); renderSignalCards(); renderTicker();
     scanTimer=60;
   } catch(e){
     log('Error: '+e.message,'err');
-    document.getElementById('tbody').innerHTML='<tr><td colspan="11" class="placeholder">Connection error — retrying...</td></tr>';
     scanTimer=15;
   }
 
