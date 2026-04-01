@@ -143,12 +143,22 @@ const CACHE_TTL = 60 * 1000;
 
 async function buildSignals() {
   console.log('Starting CryptoCompare scan...');
-  // CryptoCompare free tier is generous — run all in parallel
-  const results = await Promise.allSettled(PAIRS.map(processPair));
-  const data = results
+  const batchSize = 4;
+  const allResults = [];
+
+  for (let i = 0; i < PAIRS.length; i += batchSize) {
+    const batch = PAIRS.slice(i, i + batchSize);
+    const batchResults = await Promise.allSettled(batch.map(processPair));
+    batchResults.forEach(r => allResults.push(r));
+    if (i + batchSize < PAIRS.length) {
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  const data = allResults
     .filter(r => r.status === 'fulfilled')
     .map(r => r.value);
-  const failed = results.filter(r => r.status === 'rejected').length;
+  const failed = allResults.filter(r => r.status === 'rejected').length;
   console.log(`Scan complete: ${data.length} success, ${failed} failed`);
   if (data.length === 0) throw new Error('All CryptoCompare requests failed');
   return data;
