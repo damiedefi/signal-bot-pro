@@ -145,7 +145,7 @@ tr:hover td{background:#161616;}
             <thead><tr>
               <th>Pair</th><th>Price</th><th>24h%</th><th>RSI</th><th>MACD</th><th>BB</th><th>Score</th><th>Swing</th><th>Scalp</th><th>Conf</th>
             </tr></thead>
-            <tbody id="tbody"><tr><td colspan="10" class="placeholder">Connecting to server...</td></tr></tbody>
+            <tbody id="tbody"><tr><td colspan="12" class="placeholder">Connecting to server...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -329,7 +329,7 @@ function renderTable(){
   if(activeFilter==='swing') rows=rows.filter(s=>s.swing==='BUY'||s.swing==='SELL');
   if(activeFilter==='scalp') rows=rows.filter(s=>s.scalp==='BUY'||s.scalp==='SELL');
   const tbody=document.getElementById('tbody');
-  if(!rows.length){ tbody.innerHTML='<tr><td colspan="10" class="placeholder">No signals match filter</td></tr>'; return; }
+  if(!rows.length){ tbody.innerHTML='<tr><td colspan="12" class="placeholder">No signals match filter</td></tr>'; return; }
   tbody.innerHTML=rows.map(s=>{
     const rsiCls=s.rsi<40?'g':s.rsi>60?'r':'muted';
     const macdTxt=s.macd&&s.macd.bull?'▲ BULL':'▼ BEAR';
@@ -344,6 +344,8 @@ function renderTable(){
       <td class="${rsiCls}">${s.rsi}</td>
       <td class="${macdCls}">${macdTxt}</td>
       <td class="muted">${bbTxt}</td>
+      <td class="${s.trend4h&&s.trend4h.trend==='bull'?'g':'r'}">${s.trend4h?s.trend4h.trend.toUpperCase():'—'}</td>
+      <td class="${s.aligned===true?'g':s.aligned===false?'y':'muted'}">${s.aligned===true?'✓ Yes':s.aligned===false?'↯ Counter':'—'}</td>
       <td class="${scoreCls}">${score}/10</td>
       <td>${badge(s.swing)}</td>
       <td>${badge(s.scalp)}</td>
@@ -375,6 +377,8 @@ function renderSignalCards(){
       ? `Close below ${fPrice(sl)} invalidates`
       : `Close above ${fPrice(sl)} invalidates`;
     const reasoning = buildReasoning(s, dir, score, confPct);
+    
+    const trendBiasStr = s.trend4h ? `4H: ${s.trend4h.trend.toUpperCase()} · EMA20 ${s.trend4h.ema20} · EMA50 ${s.trend4h.ema50}` : '';
     const scoreClass = score >= 8 ? 'high' : 'mid';
     const confClass = confPct >= 75 ? 'high' : 'mid';
     const dirClass = dir==='BUY' ? 'sc-dir-buy' : 'sc-dir-sell';
@@ -428,6 +432,9 @@ function renderSignalCards(){
         <span class="sc-field-val" style="font-size:10px;color:#888;">${inv}</span>
       </div>
 
+      ${s.trendNote ? `<div style="font-size:10px;padding:4px 8px;border-radius:4px;margin-bottom:6px;background:${s.aligned?'#0f1a0f':'#1a1400'};color:${s.aligned?'#4ade80':'#fbbf24'};">${s.trendNote}</div>` : ''}
+      ${trendBiasStr ? `<div style="font-size:10px;padding:4px 8px;background:#0f0f0f;border-radius:4px;color:#444;margin-bottom:6px;">${trendBiasStr}</div>` : ''}
+      
       <div class="sc-reasoning">${reasoning}</div>
     </div>`;
   }).join('');
