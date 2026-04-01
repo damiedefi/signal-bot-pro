@@ -6,21 +6,28 @@ app.use(cors());
 app.use(express.static('public'));
 
 const PAIRS = [
-  'BTCUSDT','ETHUSDT','BNBUSDT','SOLUSDT','XRPUSDT',
-  'DOGEUSDT','ADAUSDT','AVAXUSDT','LINKUSDT','DOTUSDT',
-  'MATICUSDT','UNIUSDT','LTCUSDT','ATOMUSDT','NEARUSDT',
-  'FILUSDT','ARBUSDT','OPUSDT','INJUSDT','SUIUSDT'
+  { sym: 'BTC',   id: 'bitcoin' },
+  { sym: 'ETH',   id: 'ethereum' },
+  { sym: 'BNB',   id: 'binancecoin' },
+  { sym: 'SOL',   id: 'solana' },
+  { sym: 'XRP',   id: 'ripple' },
+  { sym: 'DOGE',  id: 'dogecoin' },
+  { sym: 'ADA',   id: 'cardano' },
+  { sym: 'AVAX',  id: 'avalanche-2' },
+  { sym: 'LINK',  id: 'chainlink' },
+  { sym: 'DOT',   id: 'polkadot' },
+  { sym: 'MATIC', id: 'matic-network' },
+  { sym: 'UNI',   id: 'uniswap' },
+  { sym: 'LTC',   id: 'litecoin' },
+  { sym: 'ATOM',  id: 'cosmos' },
+  { sym: 'NEAR',  id: 'near' },
+  { sym: 'FIL',   id: 'filecoin' },
+  { sym: 'ARB',   id: 'arbitrum' },
+  { sym: 'OP',    id: 'optimism' },
+  { sym: 'INJ',   id: 'injective-protocol' },
+  { sym: 'SUI',   id: 'sui' }
 ];
 
-const MCAPS = {
-  BTCUSDT:1.32e12, ETHUSDT:382e9,  BNBUSDT:61e9,   SOLUSDT:77e9,
-  XRPUSDT:58e9,    DOGEUSDT:23e9,  ADAUSDT:16e9,   AVAXUSDT:14e9,
-  LINKUSDT:8.5e9,  DOTUSDT:9.8e9,  MATICUSDT:7.1e9, UNIUSDT:5.9e9,
-  LTCUSDT:6.1e9,   ATOMUSDT:3.2e9, NEARUSDT:6.8e9,  FILUSDT:3.1e9,
-  ARBUSDT:3.6e9,   OPUSDT:2.9e9,   INJUSDT:2.4e9,   SUIUSDT:2.1e9
-};
-
-// ── INDICATORS ────────────────────────────────────────────
 function calcRSI(closes, period = 14) {
   if (closes.length < period + 1) return 50;
   let gains = 0, losses = 0;
@@ -40,9 +47,7 @@ function calcMACD(closes) {
     return e;
   }
   if (closes.length < 26) return { hist: 0, bull: false };
-  const fast = ema(closes.slice(-12), 12);
-  const slow = ema(closes.slice(-26), 26);
-  const hist = fast - slow;
+  const hist = ema(closes.slice(-12), 12) - ema(closes.slice(-26), 26);
   return { hist, bull: hist > 0 };
 }
 
@@ -55,8 +60,8 @@ function calcBB(closes, period = 20) {
   const last = closes[closes.length - 1];
   const range = upper - lower;
   const pct = range === 0 ? 50 : Math.round(((last - lower) / range) * 100);
-  const clamped = Math.max(0, Math.min(100, pct));
-  return { pos: clamped > 70 ? 'upper' : clamped < 30 ? 'lower' : 'mid', pct: clamped };
+  const c = Math.max(0, Math.min(100, pct));
+  return { pos: c > 70 ? 'upper' : c < 30 ? 'lower' : 'mid', pct: c };
 }
 
 function getSignal(rsi, macd, bb, pct7d, vol, mcap) {
@@ -76,53 +81,71 @@ function getSignal(rsi, macd, bb, pct7d, vol, mcap) {
   return { swing: 'HOLD', scalp: 'HOLD', conf: 1 };
 }
 
-// ── BINANCE FETCH ─────────────────────────────────────────
-async function fetchBinance(path) {
+async function cgFetch(path) {
   const { default: fetch } = await import('node-fetch');
-  const res = await fetch('https://api.binance.com' + path);
-  if (!res.ok) throw new Error('Binance error: ' + res.status);
+  const res = await fetch('https://api.coingecko.com/api/v3' + path, {
+    headers: { 'Accept': 'application/json' }
+  });
+  if (!res.ok) throw new Error('CoinGecko ' + res.status);
   return res.json();
 }
 
-async function processPair(symbol) {
-  const [klines, ticker] = await Promise.all([
-    fetchBinance(`/api/v3/klines?symbol=${symbol}&interval=1h&limit=50`),
-    fetchBinance(`/api/v3/ticker/24hr?symbol=${symbol}`)
-  ]);
-  const closes = klines.map(k => parseFloat(k[4]));
-  const rsi  = calcRSI(closes, 14);
-  const macd = calcMACD(closes);
-  const bb   = calcBB(closes, 20);
-  const price  = parseFloat(ticker.lastPrice);
-  const pct24h = parseFloat(ticker.priceChangePercent);
-  const vol    = parseFloat(ticker.quoteVolume);
-  const open   = parseFloat(ticker.openPrice);
-  const pct7d  = ((price - open) / open) * 100;
-  const sig = getSignal(rsi, macd, bb, pct7d, vol, MCAPS[symbol]);
-  return {
-    sym: symbol.replace('USDT', ''),
-    symbol, price, pct24h, pct7d,
-    vol, mcap: MCAPS[symbol],
-    rsi, macd, bb, ...sig
-  };
+let cache = { data: null, ts: 0 };
+const CACHE_TTL = 90 * 1000;
+
+async function buildSignals() {
+  const ids = PAIRS.map(p => p.id).join(',');
+  const markets = await cgFetch(
+    `/coins/markets?vs_currency=usd&ids=${ids}&order=market_cap_desc&per_page=25&price_change_percentage=24h,7d`
+  );
+  const mktMap = {};
+  markets.forEach(c => { mktMap[c.id] = c; });
+
+  const results = [];
+  for (const pair of PAIRS) {
+    try {
+      const ohlc = await cgFetch(`/coins/${pair.id}/ohlc?vs_currency=usd&days=30`);
+      const closes = ohlc.map(d => d[4]);
+      if (closes.length < 20) continue;
+      const rsi  = calcRSI(closes, 14);
+      const macd = calcMACD(closes);
+      const bb   = calcBB(closes, 20);
+      const m    = mktMap[pair.id] || {};
+      const vol  = m.total_volume || 0;
+      const mcap = m.market_cap   || 0;
+      const pct7d = m.price_change_percentage_7d_in_currency || 0;
+      const sig  = getSignal(rsi, macd, bb, pct7d, vol, mcap);
+      results.push({
+        sym: pair.sym, price: m.current_price || 0,
+        pct24h: m.price_change_percentage_24h || 0,
+        pct7d, vol, mcap, rsi, macd, bb, ...sig
+      });
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.error(`${pair.sym}: ${e.message}`);
+    }
+  }
+  return results;
 }
 
-// ── API ENDPOINT ──────────────────────────────────────────
 app.get('/api/scan', async (req, res) => {
   try {
-    const results = await Promise.allSettled(PAIRS.map(processPair));
-    const data = results
-      .filter(r => r.status === 'fulfilled')
-      .map(r => r.value);
-    res.json({ ok: true, data, timestamp: new Date().toISOString() });
+    const now = Date.now();
+    if (cache.data && (now - cache.ts) < CACHE_TTL) {
+      return res.json({ ok: true, data: cache.data, cached: true, timestamp: new Date().toISOString() });
+    }
+    const data = await buildSignals();
+    cache = { data, ts: Date.now() };
+    res.json({ ok: true, data, cached: false, timestamp: new Date().toISOString() });
   } catch (e) {
+    console.error('Scan error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, message: 'Signal Bot Pro backend running' });
+  res.json({ ok: true, message: 'Signal Bot Pro running', pairs: PAIRS.length });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Signal Bot running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Signal Bot Pro running on port ${PORT}`));
