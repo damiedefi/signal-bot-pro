@@ -252,8 +252,8 @@ function calcEntry(s) {
 
 function calcSL(s, dir) {
   if(!s.price) return null;
-  // ATR approximation using BB width
-  const atr = s.price * 0.025; // ~2.5% as proxy
+  // Use real ATR from server if available, fallback to 2.5%
+  const atr = s.atr || s.price * 0.025;
   return dir === 'BUY'
     ? +(s.price - atr * 1.5).toFixed(4)
     : +(s.price + atr * 1.5).toFixed(4);
@@ -261,7 +261,7 @@ function calcSL(s, dir) {
 
 function calcTP(s, dir) {
   if(!s.price) return { tp1: null, tp2: null };
-  const atr = s.price * 0.025;
+  const atr = s.atr || s.price * 0.025;
   if(dir === 'BUY') {
     return {
       tp1: +(s.price + atr * 2).toFixed(4),
@@ -339,7 +339,7 @@ function renderTable(){
     const macdTxt=s.macd&&s.macd.bull?'▲ BULL':'▼ BEAR';
     const macdCls=s.macd&&s.macd.bull?'g':'r';
     const bbTxt=s.bb?s.bb.pos==='upper'?`▲${s.bb.pct}%`:s.bb.pos==='lower'?`▼${s.bb.pct}%`:`◈${s.bb.pct}%`:'--';
-    const score=calcScore(s);
+    const score = s.score !== undefined ? s.score : calcScore(s);
     const scoreCls=score>=8?'g':score>=6?'y':'muted';
     return `<tr>
       <td class="pair">${s.sym}/USDT</td>
@@ -429,6 +429,10 @@ function renderSignalCards(){
           <span class="sc-field-label">RSI / BB</span>
           <span class="sc-field-val">${s.rsi} · ${s.bb?s.bb.pos:'--'}</span>
         </div>
+        <div class="sc-field">
+          <span class="sc-field-label">ATR (14)</span>
+          <span class="sc-field-val">${s.atr ? fPrice(s.atr) : '--'}</span>
+        </div>
       </div>
 
       <div class="sc-field" style="margin-bottom:6px;">
@@ -478,7 +482,7 @@ async function runScan(){
       if(s.swing==='SELL'||s.scalp==='SELL') sells++;
       if(s.conf===3 && (s.swing==='BUY'||s.swing==='SELL'||s.scalp==='BUY'||s.scalp==='SELL')){
         const dir=(s.swing==='BUY'||s.scalp==='BUY')?'BUY':'SELL';
-        const score=calcScore(s);
+        const score = s.score !== undefined ? s.score : calcScore(s);
         const confPct=calcConfPct(s);
         log(`★★★ ${dir}: ${s.sym} — Score ${score}/10 · Conf ${confPct}%`, dir.toLowerCase());
       }
