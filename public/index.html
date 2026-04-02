@@ -6,356 +6,434 @@
 <title>Defi Insider Signal Bot</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;}
-body{background:#0d0d0d;color:#e0e0e0;font-family:'Courier New',monospace;font-size:12px;}
-.dash{padding:10px;min-height:100vh;}
+body{background:#060a0f;color:#c8d8e8;font-family:'Courier New',monospace;font-size:11px;}
+.dash{padding:8px;min-height:100vh;}
 
-.topbar{display:flex;align-items:center;justify-content:space-between;padding:9px 14px;background:#111;border:0.5px solid #222;border-radius:8px;margin-bottom:8px;}
-.live-dot{width:6px;height:6px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;animation:pulse 2s infinite;}
-@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.4;}}
-.badge{font-size:10px;padding:2px 7px;border-radius:4px;background:#1a3325;color:#4ade80;}
+/* ── TOP BAR ── */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:#080e14;border:0.5px solid #0d2030;border-radius:6px;margin-bottom:8px;}
+.brand{display:flex;align-items:center;gap:10px;}
+.brand img{width:34px;height:34px;border-radius:5px;object-fit:cover;}
+.brand-name{font-size:14px;font-weight:700;color:#fff;letter-spacing:1px;text-transform:uppercase;}
+.brand-name span{color:#00ff88;}
+.brand-sub{font-size:9px;color:#2a4a3a;letter-spacing:2px;text-transform:uppercase;}
+.live-dot{width:6px;height:6px;border-radius:50%;background:#00ff88;display:inline-block;margin-right:5px;animation:blink 1.5s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.2;}}
+.badge{font-size:9px;padding:2px 7px;border-radius:3px;background:#0a2a1a;color:#00ff88;border:0.5px solid #0d4a2a;letter-spacing:.5px;}
+.topbar-right{font-size:11px;color:#1a3a2a;font-family:'Courier New',monospace;}
 
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-bottom:8px;}
-.sc{background:#111;border:0.5px solid #222;border-radius:7px;padding:9px 11px;}
-.sc-label{font-size:10px;color:#444;margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;}
-.sc-val{font-size:22px;font-weight:600;}
-.g{color:#4ade80;}.r{color:#f87171;}.y{color:#fbbf24;}.w{color:#fff;}.muted{color:#555;}
+/* ── STATS BAR ── */
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:8px;}
+.stat{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;padding:10px 14px;}
+.stat-label{font-size:9px;color:#1a3a2a;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;}
+.stat-val{font-size:24px;font-weight:700;font-family:'Courier New',monospace;}
+.stat-sub{font-size:9px;color:#1a3a2a;margin-top:2px;}
+.cv{color:#00ff88;}.rv{color:#ff4466;}.yv{color:#ffcc00;}.wv{color:#c8d8e8;}
 
-/* PAIR CARDS — main display */
-.pairs-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:10px;}
-@media(max-width:800px){.pairs-grid{grid-template-columns:1fr;}}
+/* ── TICKER ── */
+.ticker-wrap{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;padding:6px 10px;margin-bottom:8px;overflow:hidden;}
+.ticker{display:flex;gap:20px;white-space:nowrap;}
+.tick{display:flex;align-items:center;gap:6px;font-size:11px;}
+.tick-sym{color:#00ff88;font-weight:700;letter-spacing:.5px;}
+.tick-price{color:#c8d8e8;font-family:'Courier New',monospace;}
+.tick-pos{color:#00ff88;}.tick-neg{color:#ff4466;}
 
-.pair-card{background:#111;border:0.5px solid #222;border-radius:8px;overflow:hidden;}
-.pair-card.has-buy{border-color:#2d5a3d;}
-.pair-card.has-sell{border-color:#5a2d2d;}
-.pair-card.has-hc{border-color:#4ade80;box-shadow:0 0 12px rgba(74,222,128,0.08);}
+/* ── MAIN GRID ── */
+.main{display:grid;grid-template-columns:1fr 340px;gap:8px;margin-bottom:8px;}
 
-.pc-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#0f0f0f;border-bottom:0.5px solid #1a1a1a;}
-.pc-name{font-size:16px;font-weight:600;color:#fff;}
-.pc-price{font-size:15px;color:#ccc;font-family:monospace;}
-.pc-pct{font-size:12px;padding:2px 7px;border-radius:4px;}
-.pc-pct.pos{background:#1a3325;color:#4ade80;}
-.pc-pct.neg{background:#331a1a;color:#f87171;}
+/* ── TABLE PANEL ── */
+.table-panel{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;overflow:hidden;}
+.panel-header{display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:0.5px solid #0d2030;background:#050a0e;}
+.panel-title{font-size:9px;color:#00ff88;text-transform:uppercase;letter-spacing:2px;}
+.scan-btn{font-size:9px;padding:3px 10px;border-radius:3px;border:0.5px solid #0d4a2a;background:#0a2a1a;color:#00ff88;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;}
+.scan-btn:disabled{opacity:.3;cursor:default;}
 
-.pc-indicators{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border-bottom:0.5px solid #1a1a1a;}
-.pc-ind{padding:8px 10px;border-right:0.5px solid #1a1a1a;text-align:center;}
-.pc-ind:last-child{border-right:none;}
-.pc-ind-label{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px;}
-.pc-ind-val{font-size:13px;font-weight:600;}
+table{width:100%;border-collapse:collapse;}
+th{font-size:9px;color:#1a4a2a;text-align:left;padding:6px 8px;border-bottom:0.5px solid #0d2030;background:#050a0e;white-space:nowrap;text-transform:uppercase;letter-spacing:.5px;}
+td{padding:7px 8px;border-bottom:0.5px solid #080e14;white-space:nowrap;vertical-align:middle;}
+tr:hover td{background:#0a1520;}
+tr.row-buy td{border-left:2px solid #00ff88;}
+tr.row-sell td{border-left:2px solid #ff4466;}
+tr.row-watch td{border-left:2px solid #ffcc00;}
+tr.row-hold td{border-left:2px solid #1a3a2a;}
 
-.pc-signals{padding:10px 14px;}
-.pc-sig-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid #141414;}
-.pc-sig-row:last-child{border-bottom:none;}
-.pc-sig-tf{font-size:10px;color:#555;min-width:50px;}
-.pc-sig-dir{font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;min-width:60px;text-align:center;}
-.sig-buy{background:#1a3325;color:#4ade80;}
-.sig-sell{background:#331a1a;color:#f87171;}
-.sig-watch{background:#2a2a14;color:#fbbf24;}
-.sig-hold{color:#333;}
-.pc-sig-score{font-size:11px;}
-.pc-sig-stars{font-size:11px;}
-.pc-sig-trend{font-size:10px;color:#555;}
+.pair-name{font-weight:700;color:#fff;font-size:11px;}
+.mono{font-family:'Courier New',monospace;}
+.pos{color:#00ff88;}.neg{color:#ff4466;}.neu{color:#4a6a5a;}
 
-/* SIGNAL DETAIL CARDS */
-.signals-section{margin-bottom:10px;}
-.section-title{font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.5px;padding:0 2px;margin-bottom:8px;}
-.signal-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;}
-@media(max-width:800px){.signal-cards{grid-template-columns:1fr;}}
+.sig-badge{padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;text-align:center;min-width:52px;display:inline-block;}
+.sb-buy{background:#0a2a1a;color:#00ff88;border:0.5px solid #0d4a2a;}
+.sb-sell{background:#2a0a14;color:#ff4466;border:0.5px solid #4a0d1e;}
+.sb-watch{background:#2a2200;color:#ffcc00;border:0.5px solid #4a3a00;}
+.sb-hold{background:#0a0e14;color:#1a4a3a;border:0.5px solid #0d2030;}
 
-.sig-card{background:#111;border-radius:8px;overflow:hidden;border:0.5px solid #222;}
-.sig-card.buy{border-color:#2d5a3d;}
-.sig-card.sell{border-color:#5a2d2d;}
-.sig-card.hc{border-width:1px;}
+.score-bar{display:flex;align-items:center;gap:4px;}
+.score-num{font-size:11px;font-weight:700;font-family:'Courier New',monospace;}
+.score-track{width:40px;height:3px;background:#0d2030;border-radius:2px;overflow:hidden;}
+.score-fill{height:100%;border-radius:2px;}
 
-.sig-card-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#0f0f0f;}
-.sig-card-pair{font-size:14px;font-weight:600;color:#fff;}
-.sig-card-dir.buy{background:#1a3325;color:#4ade80;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;}
-.sig-card-dir.sell{background:#331a1a;color:#f87171;padding:3px 10px;border-radius:4px;font-size:11px;font-weight:600;}
+.stars{letter-spacing:1px;}
+.s3{color:#00ff88;}.s2{color:#ffcc00;}.s1{color:#1a4a3a;}
 
-.sig-card-scores{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:0.5px solid #1a1a1a;}
-.score-ring{width:48px;height:48px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;border:2px solid;}
-.score-ring.high{border-color:#4ade80;background:#0a1f12;}
-.score-ring.mid{border-color:#fbbf24;background:#1f1800;}
-.score-num{font-size:16px;font-weight:600;line-height:1;}
-.score-sub{font-size:8px;color:#555;margin-top:1px;}
-.conf-pill{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;}
-.conf-high{background:#1a3325;color:#4ade80;}
-.conf-mid{background:#2a2a14;color:#fbbf24;}
-.tf-pill{font-size:10px;padding:2px 7px;border-radius:4px;background:#1a1a2e;color:#60a5fa;}
+/* ── SIGNAL PANEL ── */
+.signal-panel{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;overflow:hidden;display:flex;flex-direction:column;}
+.signal-list{flex:1;overflow-y:auto;}
 
-.sig-card-fields{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;padding:10px 14px;border-bottom:0.5px solid #1a1a1a;}
-.field{display:flex;flex-direction:column;gap:2px;}
-.field-label{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:.3px;}
-.field-val{font-size:11px;font-weight:500;}
-.field-val.green{color:#4ade80;}
-.field-val.red{color:#f87171;}
-.field-val.yellow{color:#fbbf24;}
+.no-sig{padding:30px 16px;text-align:center;color:#1a3a2a;font-size:10px;line-height:2;}
 
-.sig-card-note{font-size:10px;color:#555;padding:8px 14px;line-height:1.5;border-bottom:0.5px solid #1a1a1a;}
-.sig-card-note.confirmed{color:#4ade80;background:#0a1f12;}
-.sig-card-note.counter{color:#fbbf24;background:#1f1800;}
-.sig-card-reasoning{font-size:10px;color:#444;padding:8px 14px;line-height:1.6;}
+.sig-item{border-bottom:0.5px solid #0d2030;padding:12px 14px;}
+.sig-item:last-child{border-bottom:none;}
+.sig-item.buy{border-left:2px solid #00ff88;}
+.sig-item.sell{border-left:2px solid #ff4466;}
 
-.log-panel{background:#111;border:0.5px solid #222;border-radius:8px;overflow:hidden;}
-.log-ph{padding:7px 12px;border-bottom:0.5px solid #1a1a1a;background:#0f0f0f;font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.4px;}
-.llist{max-height:140px;overflow-y:auto;}
-.li{padding:4px 12px;border-bottom:0.5px solid #141414;display:flex;gap:8px;font-size:11px;}
-.lt{color:#2a2a2a;min-width:55px;}
-.lbuy{color:#4ade80;}.lsell{color:#f87171;}.linfo{color:#3b82f6;}.lm{color:#555;}.lerr{color:#f59e0b;}
+.si-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
+.si-pair{font-size:13px;font-weight:700;color:#fff;}
+.si-dir-buy{font-size:10px;font-weight:700;padding:2px 10px;border-radius:3px;background:#0a2a1a;color:#00ff88;border:0.5px solid #0d4a2a;letter-spacing:1px;}
+.si-dir-sell{font-size:10px;font-weight:700;padding:2px 10px;border-radius:3px;background:#2a0a14;color:#ff4466;border:0.5px solid #4a0d1e;letter-spacing:1px;}
 
-.scan-btn{font-size:10px;padding:3px 9px;border-radius:4px;border:0.5px solid #2a4a35;background:#1a3325;color:#4ade80;cursor:pointer;}
-.scan-btn:disabled{opacity:.4;cursor:default;}
-.no-signals{color:#2a2a2a;font-size:11px;padding:20px;text-align:center;}
+.si-score-row{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.si-score-circle{width:42px;height:42px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;flex-shrink:0;}
+.si-score-circle.high{border:1.5px solid #00ff88;background:#040f08;}
+.si-score-circle.mid{border:1.5px solid #ffcc00;background:#0f0e04;}
+.si-score-big{font-size:15px;font-weight:700;line-height:1;}
+.si-score-small{font-size:8px;color:#1a4a3a;}
+.si-meta{display:flex;flex-direction:column;gap:4px;}
+.si-conf{font-size:10px;font-weight:700;}
+.si-conf.high{color:#00ff88;}.si-conf.mid{color:#ffcc00;}
+.si-pills{display:flex;gap:4px;}
+.si-pill{font-size:9px;padding:1px 6px;border-radius:3px;background:#0a1520;color:#2a6a4a;border:0.5px solid #0d2030;}
+.si-pill.aligned{color:#00ff88;border-color:#0d4a2a;}
+.si-pill.counter{color:#ffcc00;border-color:#4a3a00;}
+
+.si-fields{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-bottom:6px;}
+.si-field{display:flex;justify-content:space-between;align-items:center;padding:3px 0;border-bottom:0.5px solid #080e14;}
+.si-field-l{font-size:9px;color:#1a4a3a;text-transform:uppercase;letter-spacing:.3px;}
+.si-field-v{font-size:10px;font-weight:600;font-family:'Courier New',monospace;}
+.fv-g{color:#00ff88;}.fv-r{color:#ff4466;}.fv-y{color:#ffcc00;}.fv-w{color:#c8d8e8;}
+
+.si-note{font-size:9px;padding:4px 6px;border-radius:3px;margin-bottom:5px;line-height:1.4;}
+.si-note.confirmed{background:#040f08;color:#00aa44;border-left:2px solid #00ff88;}
+.si-note.counter{background:#0f0e04;color:#aa8800;border-left:2px solid #ffcc00;}
+
+.si-reason{font-size:9px;color:#1a5a3a;line-height:1.5;border-top:0.5px solid #0d2030;padding-top:5px;}
+
+/* ── BOT LOG ── */
+.log-panel{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;overflow:hidden;}
+.llist{max-height:100px;overflow-y:auto;}
+.li{padding:3px 12px;border-bottom:0.5px solid #080e14;display:flex;gap:10px;font-size:10px;}
+.lt{color:#0d3020;min-width:55px;font-family:'Courier New',monospace;}
+.lbuy{color:#00ff88;}.lsell{color:#ff4466;}.linfo{color:#0066aa;}.lm{color:#1a4a3a;}.lerr{color:#ffaa00;}
 </style>
 </head>
 <body>
 <div class="dash">
 
+  <!-- TOP BAR -->
   <div class="topbar">
-    <div style="display:flex;align-items:center;gap:10px;">
-      <img src="/logo.png" alt="Defi Insider" style="width:36px;height:36px;border-radius:6px;object-fit:cover;">
-      <div style="display:flex;flex-direction:column;gap:1px;">
-        <span style="font-size:15px;font-weight:600;color:#fff;">Defi Insider <span style="color:#c0392b;">Signal Bot</span></span>
-        <span style="font-size:9px;color:#444;letter-spacing:.5px;">by DAMI-DEFI</span>
+    <div class="brand">
+      <img src="/logo.png" alt="Defi Insider">
+      <div>
+        <div class="brand-name">Defi Insider <span>Signal Bot</span></div>
+        <div class="brand-sub">by DAMI-DEFI · BTC · ETH · SOL · BNB</div>
       </div>
-      <span class="badge"><span class="live-dot"></span>Live</span>
-      <span style="font-size:10px;color:#333;">BTC · ETH · SOL · BNB · 1H + 4H</span>
+      <span class="badge"><span class="live-dot"></span>LIVE</span>
     </div>
-    <span style="font-size:10px;color:#333;" id="clock">--:--:-- UTC</span>
+    <div class="topbar-right" id="clock">--:--:-- UTC</div>
   </div>
 
+  <!-- STATS BAR -->
   <div class="stats">
-    <div class="sc"><div class="sc-label">Pairs</div><div class="sc-val w">4</div></div>
-    <div class="sc"><div class="sc-label">Buy Signals</div><div class="sc-val g" id="s-buy">—</div></div>
-    <div class="sc"><div class="sc-label">Sell Signals</div><div class="sc-val r" id="s-sell">—</div></div>
-    <div class="sc"><div class="sc-label">High Conf ★★★</div><div class="sc-val y" id="s-hc">—</div></div>
-    <div class="sc"><div class="sc-label">Next Scan</div><div class="sc-val w" id="s-next">—</div></div>
-  </div>
-
-  <!-- PAIR OVERVIEW CARDS -->
-  <div class="pairs-grid" id="pairs-grid">
-    <div class="pair-card"><div class="no-signals">Connecting...</div></div>
-    <div class="pair-card"><div class="no-signals">Connecting...</div></div>
-    <div class="pair-card"><div class="no-signals">Connecting...</div></div>
-    <div class="pair-card"><div class="no-signals">Connecting...</div></div>
-  </div>
-
-  <!-- ACTIVE SIGNAL DETAIL CARDS -->
-  <div class="signals-section">
-    <div class="section-title">Active Signals</div>
-    <div class="signal-cards" id="signal-cards">
-      <div class="no-signals" style="grid-column:1/-1;">No active signals yet — waiting for scan</div>
+    <div class="stat">
+      <div class="stat-label">Pairs Tracked</div>
+      <div class="stat-val wv">4</div>
+      <div class="stat-sub">BTC · ETH · SOL · BNB</div>
     </div>
+    <div class="stat">
+      <div class="stat-label">Buy Signals</div>
+      <div class="stat-val cv" id="s-buy">—</div>
+      <div class="stat-sub">bullish setups</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Sell Signals</div>
+      <div class="stat-val rv" id="s-sell">—</div>
+      <div class="stat-sub">bearish setups</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">High Conf ★★★</div>
+      <div class="stat-val yv" id="s-hc">—</div>
+      <div class="stat-sub">all indicators agree</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Next Scan</div>
+      <div class="stat-val wv" id="s-next">—</div>
+      <div class="stat-sub" id="s-last">waiting...</div>
+    </div>
+  </div>
+
+  <!-- TICKER -->
+  <div class="ticker-wrap">
+    <div class="ticker" id="ticker">
+      <span class="tick"><span class="tick-sym">BTC</span><span class="tick-price">loading...</span></span>
+    </div>
+  </div>
+
+  <!-- MAIN GRID -->
+  <div class="main">
+
+    <!-- TABLE -->
+    <div class="table-panel">
+      <div class="panel-header">
+        <span class="panel-title">⬡ Live Monitor</span>
+        <button class="scan-btn" id="scan-btn">⟳ Scan Now</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Pair</th>
+            <th>Price</th>
+            <th>24h %</th>
+            <th>RSI(14)</th>
+            <th>MACD</th>
+            <th>BB %</th>
+            <th>4H Trend</th>
+            <th>Volume</th>
+            <th>ATR</th>
+            <th>Score</th>
+            <th>Swing</th>
+            <th>Scalp</th>
+            <th>Conf</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="13" style="padding:20px;text-align:center;color:#1a4a3a;">Connecting to server...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- SIGNAL PANEL -->
+    <div class="signal-panel">
+      <div class="panel-header">
+        <span class="panel-title">⚡ Active Signals</span>
+        <span style="font-size:9px;color:#1a4a3a;" id="sig-count">0 signals</span>
+      </div>
+      <div class="signal-list" id="signal-list">
+        <div class="no-sig">No active signals<br>Waiting for scan...</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- BOT LOG -->
   <div class="log-panel">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:0.5px solid #1a1a1a;background:#0f0f0f;">
-      <span style="font-size:10px;color:#555;text-transform:uppercase;letter-spacing:.4px;">Bot Log</span>
-      <button class="scan-btn" id="scan-btn">⟳ Scan Now</button>
+    <div class="panel-header">
+      <span class="panel-title">▸ Bot Log</span>
     </div>
     <div class="llist" id="llist"></div>
   </div>
+
 </div>
 
 <script>
-let data=[], logs=[], scanTimer=60, scanning=false;
+let pairData=[], logs=[], scanTimer=60, scanning=false;
 
 function ts(){ return new Date().toUTCString().slice(17,25); }
-function log(msg, type='info'){
-  logs.unshift({t:ts(), msg, type});
-  if(logs.length>60) logs.pop();
+function log(msg,type='info'){
+  logs.unshift({t:ts(),msg,type});
+  if(logs.length>80) logs.pop();
   renderLog();
 }
 
 function fPrice(p){
-  if(!p && p!==0) return '--';
+  if(p===null||p===undefined) return '--';
   if(p>=10000) return '$'+p.toLocaleString('en',{maximumFractionDigits:0});
   if(p>=1000)  return '$'+p.toLocaleString('en',{maximumFractionDigits:1});
   if(p>=1)     return '$'+p.toFixed(2);
   if(p>=0.01)  return '$'+p.toFixed(4);
   return '$'+p.toFixed(6);
 }
-
-function stars(c, cls){
-  const col = c===3?'g':c===2?'y':'muted';
-  return `<span class="${cls||col}">${'★'.repeat(c)}${'☆'.repeat(3-c)}</span>`;
+function fVol(v){
+  if(!v) return '--';
+  if(v>=1e9) return '$'+(v/1e9).toFixed(1)+'B';
+  if(v>=1e6) return '$'+(v/1e6).toFixed(0)+'M';
+  if(v>=1e3) return '$'+(v/1e3).toFixed(0)+'K';
+  return '$'+v.toFixed(0);
 }
-
-function confPct(s, dir) {
-  let agree=0;
+function scoreColor(sc){
+  if(sc>=7.5) return '#00ff88';
+  if(sc>=6)   return '#ffcc00';
+  return '#ff4466';
+}
+function confPct(s, dir){
+  let a=0;
   if(dir==='BUY'){
-    if(s.rsi<45) agree++;
-    if(s.macd&&s.macd.bull) agree++;
-    if(s.bb&&s.bb.pctB<0.4) agree++;
-    if(s.trend4h&&s.trend4h.trend==='bull') agree++;
+    if(s.rsi<45) a++;
+    if(s.macd&&s.macd.bull) a++;
+    if(s.bb&&s.bb.pctB<0.4) a++;
+    if(s.trend4h&&s.trend4h.trend==='bull') a++;
   } else {
-    if(s.rsi>55) agree++;
-    if(s.macd&&!s.macd.bull) agree++;
-    if(s.bb&&s.bb.pctB>0.6) agree++;
-    if(s.trend4h&&s.trend4h.trend==='bear') agree++;
+    if(s.rsi>55) a++;
+    if(s.macd&&!s.macd.bull) a++;
+    if(s.bb&&s.bb.pctB>0.6) a++;
+    if(s.trend4h&&s.trend4h.trend==='bear') a++;
   }
-  return Math.round((agree/4)*100);
+  return Math.round((a/4)*100);
 }
-
-function leverage(conf){
-  if(conf>=80) return '3x–5x';
-  if(conf>=65) return '2x–3x';
-  if(conf>=50) return '1x–2x';
-  return '1x (spot)';
+function leverage(cp){
+  if(cp>=80) return '3x–5x';
+  if(cp>=65) return '2x–3x';
+  if(cp>=50) return '1x–2x';
+  return '1x spot';
 }
-
-function buildReasoning(s, sig){
-  const parts=[];
+function reasoning(s, sig){
+  const p=[];
   if(sig.dir==='BUY'){
-    if(s.rsi<38) parts.push(`RSI ${s.rsi} — oversold`);
-    if(s.macd&&s.macd.bull) parts.push('MACD bullish');
-    if(s.bb&&s.bb.pctB<0.3) parts.push(`BB at lower band (${s.bb.pct}%)`);
-    if(s.pct24h<-2) parts.push(`24h down ${s.pct24h.toFixed(1)}% — mean reversion potential`);
-    if(s.trend4h&&s.trend4h.trend==='bull') parts.push('4H trend aligned');
+    if(s.rsi<38) p.push(`RSI ${s.rsi} oversold`);
+    if(s.macd&&s.macd.bull) p.push('MACD bullish');
+    if(s.bb&&s.bb.pctB<0.3) p.push(`BB lower band (${s.bb.pct}%)`);
+    if(s.pct24h<-2) p.push(`${s.pct24h.toFixed(1)}% 24h drop — bounce potential`);
+    if(s.trend4h&&s.trend4h.trend==='bull') p.push('4H trend aligned');
   } else {
-    if(s.rsi>62) parts.push(`RSI ${s.rsi} — overbought`);
-    if(s.macd&&!s.macd.bull) parts.push('MACD bearish');
-    if(s.bb&&s.bb.pctB>0.7) parts.push(`BB at upper band (${s.bb.pct}%)`);
-    if(s.pct24h>2) parts.push(`24h up ${s.pct24h.toFixed(1)}% — reversal risk`);
-    if(s.trend4h&&s.trend4h.trend==='bear') parts.push('4H trend aligned');
+    if(s.rsi>62) p.push(`RSI ${s.rsi} overbought`);
+    if(s.macd&&!s.macd.bull) p.push('MACD bearish');
+    if(s.bb&&s.bb.pctB>0.7) p.push(`BB upper band (${s.bb.pct}%)`);
+    if(s.pct24h>2) p.push(`+${s.pct24h.toFixed(1)}% 24h pump — reversal risk`);
+    if(s.trend4h&&s.trend4h.trend==='bear') p.push('4H trend aligned');
   }
-  if(!parts.length) parts.push('Multiple indicators in confluence');
-  return parts.join(' · ') + `.`;
+  if(!p.length) p.push('Confluence of indicators');
+  return p.join(' · ');
 }
 
-function renderPairCards(){
-  const grid = document.getElementById('pairs-grid');
-  if(!data.length){ grid.innerHTML='<div class="no-signals">No data</div>'; return; }
-
-  grid.innerHTML = data.map(s => {
-    const hasBuy  = s.signals && s.signals.some(x=>x.dir==='BUY');
-    const hasSell = s.signals && s.signals.some(x=>x.dir==='SELL');
-    const hasHC   = s.signals && s.signals.some(x=>x.conf===3);
-    const cardCls = hasHC?'has-hc':hasBuy?'has-buy':hasSell?'has-sell':'';
-
-    const pctCls  = s.pct24h>=0?'pos':'neg';
-    const pctSign = s.pct24h>=0?'+':'';
-    const rsiCls  = s.rsi<38?'g':s.rsi>62?'r':'muted';
-    const macdCls = s.macd&&s.macd.bull?'g':'r';
-    const bbCls   = s.bb&&s.bb.pctB<0.3?'g':s.bb&&s.bb.pctB>0.7?'r':'muted';
-    const tCls    = s.trend4h&&s.trend4h.trend==='bull'?'g':'r';
-
-    // Signal rows
-    const buySig  = s.signals&&s.signals.find(x=>x.dir==='BUY');
-    const sellSig = s.signals&&s.signals.find(x=>x.dir==='SELL');
-
-    const sigRows = [
-      buySig  ? `<div class="pc-sig-row">
-        <span class="pc-sig-tf">1H Scalp</span>
-        <span class="pc-sig-dir sig-buy">BUY</span>
-        <span class="pc-sig-score ${buySig.score>=7.5?'g':'y'}">${buySig.score}/10</span>
-        <span class="pc-sig-stars">${stars(buySig.conf)}</span>
-        <span class="pc-sig-trend ${buySig.aligned?'g':'y'}">${buySig.aligned?'✓':'↯'}</span>
-      </div>` : '',
-      buySig&&buySig.swing==='BUY' ? `<div class="pc-sig-row">
-        <span class="pc-sig-tf">4H Swing</span>
-        <span class="pc-sig-dir sig-buy">BUY</span>
-        <span class="pc-sig-score ${buySig.score>=7.5?'g':'y'}">${buySig.score}/10</span>
-        <span class="pc-sig-stars">${stars(buySig.conf)}</span>
-        <span class="pc-sig-trend ${buySig.aligned?'g':'y'}">${buySig.aligned?'✓':'↯'}</span>
-      </div>` : '',
-      sellSig ? `<div class="pc-sig-row">
-        <span class="pc-sig-tf">1H Scalp</span>
-        <span class="pc-sig-dir sig-sell">SELL</span>
-        <span class="pc-sig-score ${sellSig.score>=7.5?'g':'y'}">${sellSig.score}/10</span>
-        <span class="pc-sig-stars">${stars(sellSig.conf)}</span>
-        <span class="pc-sig-trend ${sellSig.aligned?'g':'y'}">${sellSig.aligned?'✓':'↯'}</span>
-      </div>` : '',
-      sellSig&&sellSig.swing==='SELL' ? `<div class="pc-sig-row">
-        <span class="pc-sig-tf">4H Swing</span>
-        <span class="pc-sig-dir sig-sell">SELL</span>
-        <span class="pc-sig-score ${sellSig.score>=7.5?'g':'y'}">${sellSig.score}/10</span>
-        <span class="pc-sig-stars">${stars(sellSig.conf)}</span>
-        <span class="pc-sig-trend ${sellSig.aligned?'g':'y'}">${sellSig.aligned?'✓':'↯'}</span>
-      </div>` : '',
-      (!buySig&&!sellSig) ? `<div class="pc-sig-row"><span class="pc-sig-dir sig-hold" style="color:#333">No signal</span></div>` : ''
-    ].filter(Boolean).join('');
-
-    return `<div class="pair-card ${cardCls}">
-      <div class="pc-header">
-        <span class="pc-name">${s.sym}/USDT</span>
-        <span class="pc-price">${fPrice(s.price)}</span>
-        <span class="pc-pct ${pctCls}">${pctSign}${s.pct24h.toFixed(2)}%</span>
-      </div>
-      <div class="pc-indicators">
-        <div class="pc-ind"><div class="pc-ind-label">RSI(14)</div><div class="pc-ind-val ${rsiCls}">${s.rsi}</div></div>
-        <div class="pc-ind"><div class="pc-ind-label">MACD</div><div class="pc-ind-val ${macdCls}">${s.macd&&s.macd.bull?'▲ BULL':'▼ BEAR'}</div></div>
-        <div class="pc-ind"><div class="pc-ind-label">BB %B</div><div class="pc-ind-val ${bbCls}">${s.bb?s.bb.pct+'%':'--'}</div></div>
-        <div class="pc-ind"><div class="pc-ind-label">4H Trend</div><div class="pc-ind-val ${tCls}">${s.trend4h?s.trend4h.trend.toUpperCase():'—'}</div></div>
-      </div>
-      <div class="pc-signals">${sigRows}</div>
-    </div>`;
+function renderTicker(){
+  document.getElementById('ticker').innerHTML = pairData.map(s=>{
+    const pc = s.pct24h>=0?'tick-pos':'tick-neg';
+    const sign = s.pct24h>=0?'+':'';
+    return `<span class="tick">
+      <span class="tick-sym">${s.sym}</span>
+      <span class="tick-price">${fPrice(s.price)}</span>
+      <span class="${pc}">${sign}${s.pct24h.toFixed(2)}%</span>
+    </span>`;
   }).join('');
 }
 
-function renderSignalCards(){
-  const container = document.getElementById('signal-cards');
-  const allSigs = [];
-  data.forEach(s => {
-    if(s.signals) s.signals.forEach(sig => allSigs.push({...sig, pairData: s}));
+function renderTable(){
+  const tbody = document.getElementById('tbody');
+  if(!pairData.length){
+    tbody.innerHTML='<tr><td colspan="13" style="padding:20px;text-align:center;color:#1a4a3a;">No data</td></tr>';
+    return;
+  }
+  tbody.innerHTML = pairData.map(s => {
+    const buySig  = s.signals&&s.signals.find(x=>x.dir==='BUY');
+    const sellSig = s.signals&&s.signals.find(x=>x.dir==='SELL');
+    const topSig  = buySig||sellSig;
+    const rowCls  = buySig&&buySig.conf===3?'row-buy':sellSig&&sellSig.conf===3?'row-sell':buySig?'row-buy':sellSig?'row-sell':'row-hold';
+
+    const rsiCls  = s.rsi<38?'pos':s.rsi>62?'neg':'neu';
+    const macdTxt = s.macd&&s.macd.bull?'▲ BULL':'▼ BEAR';
+    const macdCls = s.macd&&s.macd.bull?'pos':'neg';
+    const bbCls   = s.bb&&s.bb.pctB<0.3?'pos':s.bb&&s.bb.pctB>0.7?'neg':'neu';
+    const tCls    = s.trend4h&&s.trend4h.trend==='bull'?'pos':'neg';
+    const tTxt    = s.trend4h?s.trend4h.trend.toUpperCase():'—';
+
+    const sc = s.score||5;
+    const scCol = scoreColor(sc);
+    const scFill = Math.round((sc/10)*100);
+
+    const swingBadge = buySig&&buySig.swing==='BUY'?'sb-buy':sellSig&&sellSig.swing==='SELL'?'sb-sell':buySig&&buySig.swing==='WATCH'?'sb-watch':sellSig&&sellSig.swing==='WATCH'?'sb-watch':'sb-hold';
+    const swingTxt   = buySig&&buySig.swing==='BUY'?'BUY':sellSig&&sellSig.swing==='SELL'?'SELL':buySig?'WATCH':sellSig?'WATCH':'HOLD';
+    const scalpBadge = buySig?'sb-buy':sellSig?'sb-sell':'sb-hold';
+    const scalpTxt   = buySig?'BUY':sellSig?'SELL':'HOLD';
+
+    const conf = topSig?topSig.conf:1;
+    const starsCls = conf===3?'s3':conf===2?'s2':'s1';
+
+    return `<tr class="${rowCls}">
+      <td class="pair-name">${s.sym}<span style="color:#1a4a3a;">/USDT</span></td>
+      <td class="mono">${fPrice(s.price)}</td>
+      <td class="${s.pct24h>=0?'pos':'neg'}">${s.pct24h>=0?'+':''}${s.pct24h.toFixed(2)}%</td>
+      <td class="${rsiCls}">${s.rsi}</td>
+      <td class="${macdCls}">${macdTxt}</td>
+      <td class="${bbCls}">${s.bb?s.bb.pct+'%':'--'}</td>
+      <td class="${tCls}">${tTxt}</td>
+      <td class="neu">${fVol(s.vol)}</td>
+      <td class="neu mono">${s.atr?fPrice(s.atr):'--'}</td>
+      <td>
+        <div class="score-bar">
+          <span class="score-num" style="color:${scCol}">${sc}</span>
+          <div class="score-track"><div class="score-fill" style="width:${scFill}%;background:${scCol}"></div></div>
+        </div>
+      </td>
+      <td><span class="sig-badge ${swingBadge}">${swingTxt}</span></td>
+      <td><span class="sig-badge ${scalpBadge}">${scalpTxt}</span></td>
+      <td><span class="stars ${starsCls}">${'★'.repeat(conf)}${'☆'.repeat(3-conf)}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderSignals(){
+  const allSigs=[];
+  pairData.forEach(s=>{
+    if(s.signals) s.signals.forEach(sig=>allSigs.push({...sig, pairData:s}));
   });
+  allSigs.sort((a,b)=>b.score-a.score);
+
+  document.getElementById('sig-count').textContent = allSigs.length+' signal'+(allSigs.length!==1?'s':'');
+  const el = document.getElementById('signal-list');
 
   if(!allSigs.length){
-    container.innerHTML = '<div class="no-signals" style="grid-column:1/-1;">No active signals — market may be ranging. Next scan in ' + scanTimer + 's</div>';
+    el.innerHTML='<div class="no-sig">No active signals<br><span style="color:#0d3020">Market ranging or consolidating<br>Next scan in '+scanTimer+'s</span></div>';
     return;
   }
 
-  // Sort by score desc
-  allSigs.sort((a,b) => b.score - a.score);
-
-  container.innerHTML = allSigs.map(sig => {
+  el.innerHTML = allSigs.map(sig=>{
     const s = sig.pairData;
-    const isHC = sig.conf === 3;
-    const dirCls = sig.dir === 'BUY' ? 'buy' : 'sell';
-    const scoreClass = sig.score >= 7.5 ? 'high' : 'mid';
+    const isHC = sig.conf===3;
+    const dirCls = sig.dir==='BUY'?'buy':'sell';
+    const scClass = sig.score>=7.5?'high':'mid';
     const cp = confPct(s, sig.dir);
     const lev = leverage(cp);
-    const reasoning = buildReasoning(s, sig);
-    const noteCls = sig.aligned ? 'confirmed' : 'counter';
+    const reason = reasoning(s, sig);
+    const noteCls = sig.aligned?'confirmed':'counter';
+    const scCol = scoreColor(sig.score);
 
-    return `<div class="sig-card ${dirCls} ${isHC?'hc':''}">
-      <div class="sig-card-header">
-        <span class="sig-card-pair">${s.sym}/USDT</span>
-        <span class="sig-card-dir ${dirCls}">${sig.dir}</span>
+    return `<div class="sig-item ${dirCls}">
+      <div class="si-top">
+        <span class="si-pair">${s.sym}/USDT</span>
+        <span class="si-dir-${dirCls}">${sig.dir}</span>
       </div>
-      <div class="sig-card-scores">
-        <div class="score-ring ${scoreClass}">
-          <span class="score-num ${scoreClass==='high'?'g':'y'}">${sig.score}</span>
-          <span class="score-sub">/10</span>
+      <div class="si-score-row">
+        <div class="si-score-circle ${scClass}">
+          <span class="si-score-big" style="color:${scCol}">${sig.score}</span>
+          <span class="si-score-small">/10</span>
         </div>
-        <div style="display:flex;flex-direction:column;gap:5px;">
-          <span class="conf-pill ${isHC?'conf-high':'conf-mid'}">${cp}% confidence</span>
-          <div style="display:flex;gap:5px;">
-            ${stars(sig.conf)}
-            <span class="tf-pill">1H + 4H</span>
+        <div class="si-meta">
+          <span class="si-conf ${scClass}">${cp}% confidence</span>
+          <div class="si-pills">
+            <span class="si-pill">${'★'.repeat(sig.conf)}${'☆'.repeat(3-sig.conf)}</span>
+            <span class="si-pill ${sig.aligned?'aligned':'counter'}">${sig.aligned?'✓ Aligned':'↯ Counter'}</span>
+            <span class="si-pill">${lev}</span>
           </div>
         </div>
       </div>
-      <div class="sig-card-fields">
-        <div class="field"><span class="field-label">Entry</span><span class="field-val">${fPrice(s.price)}</span></div>
-        <div class="field"><span class="field-label">Stop Loss</span><span class="field-val red">${fPrice(sig.sl)}</span></div>
-        <div class="field"><span class="field-label">TP1</span><span class="field-val green">${fPrice(sig.tp1)}</span></div>
-        <div class="field"><span class="field-label">TP2</span><span class="field-val green">${fPrice(sig.tp2)}</span></div>
-        <div class="field"><span class="field-label">Leverage</span><span class="field-val yellow">${lev}</span></div>
-        <div class="field"><span class="field-label">ATR(14)</span><span class="field-val">${fPrice(s.atr)}</span></div>
-        <div class="field"><span class="field-label">RSI</span><span class="field-val ${s.rsi<38?'green':s.rsi>62?'red':''}">${s.rsi}</span></div>
-        <div class="field"><span class="field-label">BB Position</span><span class="field-val">${s.bb?s.bb.pct+'%':'--'}</span></div>
+      <div class="si-fields">
+        <div class="si-field"><span class="si-field-l">Entry</span><span class="si-field-v fv-w">${fPrice(s.price)}</span></div>
+        <div class="si-field"><span class="si-field-l">Stop Loss</span><span class="si-field-v fv-r">${fPrice(sig.sl)}</span></div>
+        <div class="si-field"><span class="si-field-l">TP1</span><span class="si-field-v fv-g">${fPrice(sig.tp1)}</span></div>
+        <div class="si-field"><span class="si-field-l">TP2</span><span class="si-field-v fv-g">${fPrice(sig.tp2)}</span></div>
+        <div class="si-field"><span class="si-field-l">ATR(14)</span><span class="si-field-v fv-w">${fPrice(s.atr)}</span></div>
+        <div class="si-field"><span class="si-field-l">RSI</span><span class="si-field-v ${s.rsi<38?'fv-g':s.rsi>62?'fv-r':'fv-w'}">${s.rsi}</span></div>
       </div>
-      <div class="field" style="padding:6px 14px 0;"><span class="field-label">Invalidation</span><span class="field-val" style="font-size:10px;color:#666;">${sig.dir==='BUY'?'Close below '+fPrice(sig.sl):'Close above '+fPrice(sig.sl)}</span></div>
-      ${sig.trendNote ? `<div class="sig-card-note ${noteCls}">${sig.trendNote}</div>` : ''}
-      <div class="sig-card-reasoning">${reasoning}</div>
+      <div class="si-field" style="padding:3px 0 6px;border-bottom:0.5px solid #080e14;">
+        <span class="si-field-l">Invalidation</span>
+        <span class="si-field-v" style="color:#1a5a3a;font-size:9px;">${sig.dir==='BUY'?'Close below '+fPrice(sig.sl):'Close above '+fPrice(sig.sl)}</span>
+      </div>
+      ${sig.trendNote?`<div class="si-note ${noteCls}">${sig.trendNote}</div>`:''}
+      <div class="si-reason">${reason}</div>
     </div>`;
   }).join('');
 }
 
 function renderLog(){
-  document.getElementById('llist').innerHTML = logs.map(l => {
-    const cls = l.type==='buy'?'lbuy':l.type==='sell'?'lsell':l.type==='info'?'linfo':l.type==='err'?'lerr':'lm';
+  document.getElementById('llist').innerHTML = logs.map(l=>{
+    const cls=l.type==='buy'?'lbuy':l.type==='sell'?'lsell':l.type==='info'?'linfo':l.type==='err'?'lerr':'lm';
     return `<div class="li"><span class="lt">${l.t}</span><span class="${cls}">${l.msg}</span></div>`;
   }).join('');
 }
@@ -364,7 +442,7 @@ async function runScan(){
   if(scanning) return;
   scanning=true;
   const btn=document.getElementById('scan-btn');
-  btn.disabled=true; btn.textContent='⟳ Scanning...';
+  btn.disabled=true; btn.textContent='⟳ SCANNING...';
   log('Scanning BTC · ETH · SOL · BNB...','info');
 
   try{
@@ -372,25 +450,25 @@ async function runScan(){
     const json = await res.json();
     if(!json.ok) throw new Error(json.error||'Server error');
 
-    data = json.data;
-    let buys=0, sells=0, hc=0;
-    data.forEach(s => {
-      if(s.signals) s.signals.forEach(sig => {
-        if(sig.dir==='BUY')  { buys++;  if(sig.conf===3) hc++; log(`BUY: ${s.sym} — Score ${sig.score}/10 ${sig.conf===3?'★★★':'★★'}`, 'buy'); }
-        if(sig.dir==='SELL') { sells++; if(sig.conf===3) hc++; log(`SELL: ${s.sym} — Score ${sig.score}/10 ${sig.conf===3?'★★★':'★★'}`, 'sell'); }
+    pairData = json.data;
+    let buys=0,sells=0,hc=0;
+    pairData.forEach(s=>{
+      if(s.signals) s.signals.forEach(sig=>{
+        if(sig.dir==='BUY') { buys++; if(sig.conf===3) hc++; log(`BUY: ${s.sym} — Score ${sig.score}/10 ${sig.conf===3?'★★★':'★★'}`,'buy'); }
+        if(sig.dir==='SELL'){ sells++; if(sig.conf===3) hc++; log(`SELL: ${s.sym} — Score ${sig.score}/10 ${sig.conf===3?'★★★':'★★'}`,'sell'); }
       });
     });
 
     document.getElementById('s-buy').textContent  = buys;
     document.getElementById('s-sell').textContent = sells;
     document.getElementById('s-hc').textContent   = hc;
+    document.getElementById('s-last').textContent = 'updated '+ts()+' UTC';
 
-    if(buys===0&&sells===0) log('No signals this scan — market ranging or consolidating','info');
+    if(!buys&&!sells) log('No signals — market consolidating','info');
     log(`Scan complete — ${buys} buy · ${sells} sell · ${hc} ★★★`,'info');
 
-    renderPairCards();
-    renderSignalCards();
-    scanTimer = 60;
+    renderTicker(); renderTable(); renderSignals();
+    scanTimer=60;
   } catch(e){
     log('Error: '+e.message,'err');
     scanTimer=15;
