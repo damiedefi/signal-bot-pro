@@ -5,36 +5,59 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
-const PAIRS = [
-  { sym: 'BTC',   cc: 'BTC' },
-  { sym: 'ETH',   cc: 'ETH' },
-  { sym: 'BNB',   cc: 'BNB' },
-  { sym: 'SOL',   cc: 'SOL' },
-  { sym: 'XRP',   cc: 'XRP' },
-  { sym: 'DOGE',  cc: 'DOGE' },
-  { sym: 'ADA',   cc: 'ADA' },
-  { sym: 'AVAX',  cc: 'AVAX' },
-  { sym: 'LINK',  cc: 'LINK' },
-  { sym: 'DOT',   cc: 'DOT' },
-  { sym: 'MATIC', cc: 'MATIC' },
-  { sym: 'UNI',   cc: 'UNI' },
-  { sym: 'LTC',   cc: 'LTC' },
-  { sym: 'ATOM',  cc: 'ATOM' },
-  { sym: 'NEAR',  cc: 'NEAR' },
-  { sym: 'FIL',   cc: 'FIL' },
-  { sym: 'ARB',   cc: 'ARB' },
-  { sym: 'OP',    cc: 'OP' },
-  { sym: 'INJ',   cc: 'INJ' },
-  { sym: 'SUI',   cc: 'SUI' }
-];
+// ── DYNAMIC PAIRS (cached 4 hours) ───────────────────────
+let pairsCache = { pairs: null, ts: 0 };
+const PAIRS_TTL = 4 * 60 * 60 * 1000; // 4 hours
 
-const MCAPS = {
-  BTC:1.32e12, ETH:382e9,  BNB:61e9,   SOL:77e9,
-  XRP:58e9,    DOGE:23e9,  ADA:16e9,   AVAX:14e9,
-  LINK:8.5e9,  DOT:9.8e9,  MATIC:7.1e9, UNI:5.9e9,
-  LTC:6.1e9,   ATOM:3.2e9, NEAR:6.8e9,  FIL:3.1e9,
-  ARB:3.6e9,   OP:2.9e9,   INJ:2.4e9,   SUI:2.1e9
-};
+async function getTop20Pairs() {
+  const now = Date.now();
+  if (pairsCache.pairs && (now - pairsCache.ts) < PAIRS_TTL) {
+    return pairsCache.pairs;
+  }
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const res = await fetch(
+      'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=20&page=1&sparkline=false',
+      { headers: { 'Accept': 'application/json' } }
+    );
+    if (!res.ok) throw new Error('CoinGecko ' + res.status);
+    const coins = await res.json();
+    const pairs = coins.map(c => ({
+      sym:  c.symbol.toUpperCase(),
+      cc:   c.symbol.toUpperCase(),
+      mcap: c.market_cap || 0,
+      cgId: c.id
+    }));
+    pairsCache = { pairs, ts: now };
+    console.log(`Top 20 pairs loaded: ${pairs.map(p => p.sym).join(', ')}`);
+    return pairs;
+  } catch (e) {
+    console.error('Failed to fetch top 20 from CoinGecko:', e.message);
+    // Fallback to hardcoded list if CoinGecko fails
+    return [
+      { sym:'BTC',  cc:'BTC',  mcap:1.32e12 },
+      { sym:'ETH',  cc:'ETH',  mcap:382e9 },
+      { sym:'BNB',  cc:'BNB',  mcap:61e9 },
+      { sym:'SOL',  cc:'SOL',  mcap:77e9 },
+      { sym:'XRP',  cc:'XRP',  mcap:58e9 },
+      { sym:'DOGE', cc:'DOGE', mcap:23e9 },
+      { sym:'ADA',  cc:'ADA',  mcap:16e9 },
+      { sym:'AVAX', cc:'AVAX', mcap:14e9 },
+      { sym:'LINK', cc:'LINK', mcap:8.5e9 },
+      { sym:'DOT',  cc:'DOT',  mcap:9.8e9 },
+      { sym:'MATIC',cc:'MATIC',mcap:7.1e9 },
+      { sym:'UNI',  cc:'UNI',  mcap:5.9e9 },
+      { sym:'LTC',  cc:'LTC',  mcap:6.1e9 },
+      { sym:'ATOM', cc:'ATOM', mcap:3.2e9 },
+      { sym:'NEAR', cc:'NEAR', mcap:6.8e9 },
+      { sym:'FIL',  cc:'FIL',  mcap:3.1e9 },
+      { sym:'ARB',  cc:'ARB',  mcap:3.6e9 },
+      { sym:'OP',   cc:'OP',   mcap:2.9e9 },
+      { sym:'INJ',  cc:'INJ',  mcap:2.4e9 },
+      { sym:'SUI',  cc:'SUI',  mcap:2.1e9 }
+    ];
+  }
+}
 
 // ── INDICATORS ────────────────────────────────────────────
 function calcRSI(closes, period = 14) {
@@ -61,19 +84,42 @@ function calcMACD(closes) {
 }
 
 function calcBB(closes, period = 20) {
-  if (closes.length < period) return { pos: 'mid', pct: 50 };
+  if (closes.length < period) return { pos: 'mid', pct: 50, pctB: 0.5 };
   const slice = closes.slice(-period);
   const mid = slice.reduce((a, b) => a + b, 0) / period;
   const std = Math.sqrt(slice.reduce((s, v) => s + Math.pow(v - mid, 2), 0) / period);
   const upper = mid + 2 * std, lower = mid - 2 * std;
   const last = closes[closes.length - 1];
   const range = upper - lower;
-  const pct = range === 0 ? 50 : Math.round(((last - lower) / range) * 100);
+  const pctB = range === 0 ? 0.5 : (last - lower) / range; // 0-1 raw value
+  const pct = Math.round(pctB * 100);
   const c = Math.max(0, Math.min(100, pct));
-  return { pos: c > 70 ? 'upper' : c < 30 ? 'lower' : 'mid', pct: c };
+  return { pos: c > 70 ? 'upper' : c < 30 ? 'lower' : 'mid', pct: c, pctB };
 }
 
-// ── 4H TREND (soft filter only — caps confidence, never blocks) ──
+// ── REAL ATR (14-period) ──────────────────────────────────
+function calcATR(candles, period = 14) {
+  if (candles.length < period + 1) {
+    // Fallback: use last close * 2.5%
+    return candles[candles.length - 1].close * 0.025;
+  }
+  const trueRanges = [];
+  for (let i = 1; i < candles.length; i++) {
+    const high  = candles[i].high;
+    const low   = candles[i].low;
+    const close = candles[i - 1].close;
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - close),
+      Math.abs(low  - close)
+    );
+    trueRanges.push(tr);
+  }
+  const recent = trueRanges.slice(-period);
+  return recent.reduce((a, b) => a + b, 0) / period;
+}
+
+// ── 4H TREND (soft filter) ────────────────────────────────
 function calcEMA(closes, period) {
   if (closes.length < period) return closes[closes.length - 1];
   const k = 2 / (period + 1);
@@ -88,63 +134,115 @@ function get4HTrend(closes4h) {
   const ema50 = calcEMA(closes4h, 50);
   const price = closes4h[closes4h.length - 1];
   return {
-    trend:         ema20 > ema50 ? 'bull' : 'bear',
-    priceVsEMA20:  price > ema20 ? 'above' : 'below',
-    ema20:         +ema20.toFixed(4),
-    ema50:         +ema50.toFixed(4)
+    trend:        ema20 > ema50 ? 'bull' : 'bear',
+    priceVsEMA20: price > ema20 ? 'above' : 'below',
+    ema20:        +ema20.toFixed(4),
+    ema50:        +ema50.toFixed(4)
   };
 }
 
-// ── SIGNAL LOGIC ──────────────────────────────────────────
-// 4H trend used as confidence modifier only:
-//   Aligned with 4H   → full confidence (can reach ★★★)
-//   Counter to 4H     → capped at ★★ max (still visible, just lower grade)
-//   No 4H data        → unaffected
+// ── WEIGHTED 0-10 SCORING SYSTEM ─────────────────────────
+// Replaces the old 4-point binary system.
+// Starts neutral at 5, each indicator adds or subtracts weight.
+// More nuanced — a deeply oversold RSI still scores even in a bear market.
 
-function getSignal(rsi, macd, bb, pct7d, vol, mcap, trend4h) {
-  let bull = 0, bear = 0;
+function calcWeightedScore(rsi, macd, bb, pct7d, volRatio, trend4h) {
+  let score = 5; // neutral starting point
 
-  // Core 1H indicators
-  if (rsi < 38) bull++; else if (rsi > 62) bear++;
-  if (macd.bull) bull++; else bear++;
-  if (bb.pos === 'lower') bull++; else if (bb.pos === 'upper') bear++;
-  if (typeof pct7d === 'number') {
-    if (pct7d > 2) bull++; else if (pct7d < -2) bear++;
+  // RSI — stronger weight for extremes
+  if      (rsi < 25) score += 3.5;
+  else if (rsi < 30) score += 3.0;
+  else if (rsi < 38) score += 2.0;
+  else if (rsi < 45) score += 0.5;
+  else if (rsi > 75) score -= 3.5;
+  else if (rsi > 70) score -= 3.0;
+  else if (rsi > 62) score -= 2.0;
+  else if (rsi > 55) score -= 0.5;
+
+  // MACD histogram direction
+  if (macd.bull) score += 2.0;
+  else           score -= 2.0;
+
+  // BB %B position (0-1 scale)
+  if      (bb.pctB < 0.1) score += 2.5;
+  else if (bb.pctB < 0.2) score += 2.0;
+  else if (bb.pctB < 0.3) score += 1.0;
+  else if (bb.pctB > 0.9) score -= 2.5;
+  else if (bb.pctB > 0.8) score -= 2.0;
+  else if (bb.pctB > 0.7) score -= 1.0;
+
+  // 7d momentum (lighter weight)
+  if      (pct7d > 10) score += 1.5;
+  else if (pct7d > 5)  score += 1.0;
+  else if (pct7d > 2)  score += 0.5;
+  else if (pct7d < -10) score -= 1.5;
+  else if (pct7d < -5)  score -= 1.0;
+  else if (pct7d < -2)  score -= 0.5;
+
+  // Volume filter
+  if (volRatio < 0.005) score -= 1.5;
+  else if (volRatio < 0.01) score -= 0.5;
+
+  // 4H trend — soft bias only, small weight
+  if (trend4h) {
+    if (trend4h.trend === 'bull') score += 1.0;
+    else                          score -= 0.5; // smaller penalty than bonus
   }
 
-  const hasVol = vol && mcap && (vol / mcap) > 0.01;
-  if (!hasVol) bull = Math.max(0, bull - 1);
+  return Math.max(0, Math.min(10, +score.toFixed(1)));
+}
 
-  // Determine raw signal direction and confidence
-  let swing, scalp, conf, aligned;
+// ── SIGNAL DECISION ───────────────────────────────────────
+// Score-based thresholds replace old 3-point binary logic.
+// Swing = trend-following (higher bar, 4H alignment for ★★★)
+// Scalp = mean-reversion (lower bar, allows counter-trend on extremes)
 
-  if (bull >= 3 && hasVol) {
-    swing = 'BUY'; scalp = 'BUY';
-    // 4H aligned = ★★★, counter-trend = capped at ★★
-    aligned = !trend4h || trend4h.trend === 'bull';
-    conf = aligned ? Math.min(3, bull) : 2;
-  } else if (bull >= 2 && hasVol) {
-    swing = rsi < 40 ? 'BUY' : 'WATCH'; scalp = 'BUY';
-    aligned = !trend4h || trend4h.trend === 'bull';
-    conf = 2; // already ★★, 4H doesn't reduce further
-  } else if (bear >= 3 && hasVol) {
-    swing = 'SELL'; scalp = 'SELL';
-    aligned = !trend4h || trend4h.trend === 'bear';
-    conf = aligned ? Math.min(3, bear) : 2;
-  } else if (bear >= 2 && hasVol) {
-    swing = rsi > 60 ? 'SELL' : 'WATCH'; scalp = 'SELL';
-    aligned = !trend4h || trend4h.trend === 'bear';
+function getSignal(score, rsi, macd, bb, trend4h, volRatio) {
+  const hasVol = volRatio > 0.005;
+  const isBull = score >= 6;   // net bullish
+  const isBear = score <= 4;   // net bearish
+  const strongBull = score >= 7;
+  const strongBear = score <= 3;
+
+  // 4H alignment check
+  const aligned4H = trend4h
+    ? (isBull && trend4h.trend === 'bull') || (isBear && trend4h.trend === 'bear')
+    : true;
+
+  let swing, scalp, conf, aligned, trendNote;
+
+  if (strongBull && hasVol) {
+    scalp = 'BUY';
+    swing = isBull ? 'BUY' : 'WATCH';
+    // ★★★ requires score ≥ 7.5 AND 4H aligned
+    conf = (score >= 7.5 && aligned4H) ? 3 : 2;
+    aligned = aligned4H;
+  } else if (isBull && hasVol) {
+    scalp = 'BUY';
+    swing = 'WATCH';
     conf = 2;
+    aligned = aligned4H;
+  } else if (strongBear && hasVol) {
+    scalp = 'SELL';
+    swing = isBear ? 'SELL' : 'WATCH';
+    conf = (score <= 2.5 && aligned4H) ? 3 : 2;
+    aligned = aligned4H;
+  } else if (isBear && hasVol) {
+    scalp = 'SELL';
+    swing = 'WATCH';
+    conf = 2;
+    aligned = aligned4H;
   } else {
     swing = 'HOLD'; scalp = 'HOLD'; conf = 1; aligned = null;
   }
 
-  // Context note for the signal card
-  let trendNote = '';
   if (aligned === false && trend4h) {
     trendNote = `Counter-trend — 4H is ${trend4h.trend.toUpperCase()}. Confidence capped at ★★.`;
+    conf = Math.min(conf, 2);
   } else if (aligned === true && trend4h) {
     trendNote = `Trend-confirmed — 4H is ${trend4h.trend.toUpperCase()}. Full confidence.`;
+  } else {
+    trendNote = '';
   }
 
   return { swing, scalp, conf, aligned, trendNote };
@@ -177,28 +275,41 @@ async function processPair(pair) {
   const closes4h = candles4h.map(c => c.close);
   const price    = closes1h[closes1h.length - 1];
 
+  // Indicators
   const rsi     = calcRSI(closes1h, 14);
   const macd    = calcMACD(closes1h);
   const bb      = calcBB(closes1h, 20);
+  const atr     = calcATR(candles1h, 14); // real ATR from OHLC
   const trend4h = get4HTrend(closes4h);
 
+  // Price changes
   const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length - 24] : closes1h[0];
   const price7dAgo  = closes1h.length >= 48  ? closes1h[0] : closes1h[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
   const pct7d  = ((price - price7dAgo)  / price7dAgo)  * 100;
 
   const lastCandle = candles1h[candles1h.length - 1];
-  const vol  = lastCandle.volumeto || 0;
-  const mcap = MCAPS[pair.sym] || 0;
+  const vol     = lastCandle.volumeto || 0;
+  const mcap    = pair.mcap || 0;
+  const volRatio = mcap > 0 ? vol / mcap : 0;
 
-  const sig = getSignal(rsi, macd, bb, pct7d, vol, mcap, trend4h);
+  // Weighted score
+  const score = calcWeightedScore(rsi, macd, bb, pct7d, volRatio, trend4h);
 
-  const alignedStr = sig.aligned === true ? '✓' : sig.aligned === false ? '↯' : '-';
-  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pos} 4H=${trend4h?trend4h.trend:'?'} ${alignedStr} → ${sig.swing}(${sig.conf}★)`);
+  // Signal decision
+  const sig = getSignal(score, rsi, macd, bb, trend4h, volRatio);
+
+  console.log(
+    `${pair.sym}: RSI=${rsi} MACD=${macd.bull?'BULL':'BEAR'} BB=${bb.pct}% ` +
+    `pctB=${bb.pctB.toFixed(2)} 7d=${pct7d.toFixed(1)}% ` +
+    `vol=${volRatio.toFixed(3)} 4H=${trend4h?trend4h.trend:'?'} ` +
+    `Score=${score} → ${sig.swing}(${sig.conf}★) ATR=${atr.toFixed(4)}`
+  );
 
   return {
     sym: pair.sym, price, pct24h, pct7d,
-    vol, mcap, rsi, macd, bb, trend4h, ...sig
+    vol, mcap, volRatio, rsi, macd, bb,
+    atr, trend4h, score, ...sig
   };
 }
 
@@ -207,20 +318,27 @@ let cache = { data: null, ts: 0 };
 const CACHE_TTL = 60 * 1000;
 
 async function buildSignals() {
-  console.log('Starting scan...');
+  const pairs = await getTop20Pairs();
+  console.log(`Starting scan for ${pairs.length} pairs...`);
+
   const batchSize = 4;
   const allResults = [];
-  for (let i = 0; i < PAIRS.length; i += batchSize) {
-    const batch = PAIRS.slice(i, i + batchSize);
+  for (let i = 0; i < pairs.length; i += batchSize) {
+    const batch = pairs.slice(i, i + batchSize);
     const batchResults = await Promise.allSettled(batch.map(processPair));
-    batchResults.forEach(r => allResults.push(r));
-    if (i + batchSize < PAIRS.length) {
+    batchResults.forEach((r, idx) => {
+      if (r.status === 'rejected') {
+        console.error(`${batch[idx].sym}: ${r.reason.message}`);
+      }
+      allResults.push(r);
+    });
+    if (i + batchSize < pairs.length) {
       await new Promise(r => setTimeout(r, 1200));
     }
   }
+
   const data = allResults.filter(r => r.status === 'fulfilled').map(r => r.value);
-  const failed = allResults.filter(r => r.status === 'rejected').length;
-  console.log(`Scan complete: ${data.length} success, ${failed} failed`);
+  console.log(`Scan complete: ${data.length}/${pairs.length} pairs`);
   if (data.length === 0) throw new Error('All requests failed');
   return data;
 }
@@ -243,18 +361,22 @@ app.get('/api/scan', async (req, res) => {
 
 app.get('/api/health', async (req, res) => {
   try {
-    const data = await ccFetch('/data/price?fsym=BTC&tsyms=USDT');
+    const { default: fetch } = await import('node-fetch');
+    const r = await fetch('https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USDT');
+    const d = await r.json();
     res.json({
       ok: true,
-      cryptocompare: data.USDT ? 'connected' : 'error',
-      btcPrice: data.USDT ? '$' + data.USDT.toLocaleString() : null,
-      pairs: PAIRS.length,
-      logic: '1H signals + 4H soft filter (counter-trend capped at ★★)'
+      cryptocompare: d.USDT ? 'connected' : 'error',
+      btcPrice: d.USDT ? '$' + d.USDT.toLocaleString() : null,
+      scoring: 'weighted 0-10 system',
+      atr: 'real 14-period ATR from OHLC',
+      pairs: 'dynamic top-20 from CoinGecko',
+      pairsCacheAge: pairsCache.ts ? Math.round((Date.now() - pairsCache.ts) / 60000) + 'min ago' : 'not loaded'
     });
   } catch (e) {
-    res.json({ ok: false, cryptocompare: 'error', error: e.message });
+    res.json({ ok: false, error: e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Signal Bot Pro running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Defi Insider Signal Bot running on port ${PORT}`));
