@@ -212,8 +212,12 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
     <!-- SIGNAL PANEL -->
     <div class="signal-panel">
       <div class="panel-header">
-        <span class="panel-title">⚡ Active Signals</span>
-        <span style="font-size:9px;color:#1a4a3a;" id="sig-count">0 signals</span>
+        <span class="panel-title">⚡ Signals</span>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span style="font-size:9px;color:#1a4a3a;" id="sig-count">0 signals</span>
+          <button onclick="setTab('active')" id="tab-active" style="font-size:9px;padding:2px 7px;border-radius:3px;border:0.5px solid #0d4a2a;background:#0a2a1a;color:#00ff88;cursor:pointer;letter-spacing:.5px;">ACTIVE</button>
+          <button onclick="setTab('history')" id="tab-history" style="font-size:9px;padding:2px 7px;border-radius:3px;border:0.5px solid #0d2030;background:transparent;color:#1a4a3a;cursor:pointer;letter-spacing:.5px;">LAST 4H</button>
+        </div>
       </div>
       <div class="signal-list" id="signal-list">
         <div class="no-sig">No active signals<br>Waiting for scan...</div>
@@ -233,7 +237,7 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
 </div>
 
 <script>
-let pairData=[], logs=[], scanTimer=60, scanning=false;
+let pairData=[], logs=[], scanTimer=60, scanning=false, signalHistory=[], activeTab='active';
 
 function ts(){ return new Date().toUTCString().slice(17,25); }
 function log(msg,type='info'){
@@ -320,6 +324,7 @@ function renderTable(){
     tbody.innerHTML='<tr><td colspan="13" style="padding:20px;text-align:center;color:#1a4a3a;">No data</td></tr>';
     return;
   }
+  // Always render all pairs — HOLD rows shown in muted style
   tbody.innerHTML = pairData.map(s => {
     const buySig  = s.signals&&s.signals.find(x=>x.dir==='BUY');
     const sellSig = s.signals&&s.signals.find(x=>x.dir==='SELL');
@@ -365,6 +370,65 @@ function renderTable(){
       <td><span class="sig-badge ${scalpBadge}">${scalpTxt}</span></td>
       <td><span class="stars ${starsCls}">${'★'.repeat(conf)}${'☆'.repeat(3-conf)}</span></td>
     </tr>`;
+  }).join('');
+}
+
+function setTab(tab){
+  activeTab=tab;
+  const btnA=document.getElementById('tab-active');
+  const btnH=document.getElementById('tab-history');
+  if(tab==='active'){
+    btnA.style.background='#0a2a1a'; btnA.style.color='#00ff88'; btnA.style.borderColor='#0d4a2a';
+    btnH.style.background='transparent'; btnH.style.color='#1a4a3a'; btnH.style.borderColor='#0d2030';
+    renderSignals();
+  } else {
+    btnH.style.background='#0a2a1a'; btnH.style.color='#00ff88'; btnH.style.borderColor='#0d4a2a';
+    btnA.style.background='transparent'; btnA.style.color='#1a4a3a'; btnA.style.borderColor='#0d2030';
+    renderHistory();
+  }
+}
+
+function timeAgo(tsMs){
+  const diff = Math.floor((Date.now()-tsMs)/1000);
+  if(diff<60) return diff+'s ago';
+  if(diff<3600) return Math.floor(diff/60)+'m ago';
+  return Math.floor(diff/3600)+'h ago';
+}
+
+function renderHistory(){
+  const el=document.getElementById('signal-list');
+  document.getElementById('sig-count').textContent = signalHistory.length+' in last 4H';
+  if(!signalHistory.length){
+    el.innerHTML='<div class="no-sig">No signals in the last 4 hours</div>';
+    return;
+  }
+  el.innerHTML = signalHistory.map(h=>{
+    const dirCls=h.dir==='BUY'?'buy':'sell';
+    const scCol=scoreColor(h.score);
+    const confCls=h.conf===3?'high':'mid';
+    return `<div class="sig-item ${dirCls}" style="opacity:0.85;">
+      <div class="si-top">
+        <span class="si-pair">${h.sym}/USDT</span>
+        <span class="si-dir-${dirCls}">${h.dir}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+        <div class="si-score-circle ${confCls}" style="width:36px;height:36px;">
+          <span class="si-score-big" style="color:${scCol};font-size:13px;">${h.score}</span>
+          <span class="si-score-small">/10</span>
+        </div>
+        <div class="si-meta">
+          <span style="font-size:9px;color:#1a5a3a;">${h.timeStr} UTC · ${'★'.repeat(h.conf)}${'☆'.repeat(3-h.conf)}</span>
+          <span style="font-size:9px;color:#0d3020;">${timeAgo(h.ts)}</span>
+        </div>
+      </div>
+      <div class="si-fields">
+        <div class="si-field"><span class="si-field-l">Entry</span><span class="si-field-v fv-w">${fPrice(h.price)}</span></div>
+        <div class="si-field"><span class="si-field-l">Stop Loss</span><span class="si-field-v fv-r">${fPrice(h.sl)}</span></div>
+        <div class="si-field"><span class="si-field-l">TP1</span><span class="si-field-v fv-g">${fPrice(h.tp1)}</span></div>
+        <div class="si-field"><span class="si-field-l">TP2</span><span class="si-field-v fv-g">${fPrice(h.tp2)}</span></div>
+      </div>
+      ${h.trendNote?`<div class="si-note ${h.aligned?'confirmed':'counter'}" style="margin-top:4px;">${h.trendNote}</div>`:''}
+    </div>`;
   }).join('');
 }
 
@@ -451,6 +515,7 @@ async function runScan(){
     if(!json.ok) throw new Error(json.error||'Server error');
 
     pairData = json.data;
+    if(json.history) signalHistory = json.history;
     let buys=0,sells=0,hc=0;
     pairData.forEach(s=>{
       if(s.signals) s.signals.forEach(sig=>{
@@ -467,7 +532,7 @@ async function runScan(){
     if(!buys&&!sells) log('No signals — market consolidating','info');
     log(`Scan complete — ${buys} buy · ${sells} sell · ${hc} ★★★`,'info');
 
-    renderTicker(); renderTable(); renderSignals();
+    renderTicker(); renderTable(); if(activeTab==='active') renderSignals(); else renderHistory();
     scanTimer=60;
   } catch(e){
     log('Error: '+e.message,'err');
