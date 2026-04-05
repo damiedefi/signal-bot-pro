@@ -172,7 +172,13 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
   <!-- TICKER -->
   <div class="ticker-wrap">
     <div class="ticker" id="ticker">
-      <span class="tick"><span class="tick-sym">BTC</span><span class="tick-price">loading...</span></span>
+      <span class="tick"><span class="tick-sym">BTC</span><span class="tick-price" id="tick-BTC">--</span><span class="tick-pct" id="tick-BTC-pct" style="color:#1a4a3a">--</span></span>
+      <span style="color:#0d2030;">·</span>
+      <span class="tick"><span class="tick-sym">ETH</span><span class="tick-price" id="tick-ETH">--</span><span class="tick-pct" id="tick-ETH-pct" style="color:#1a4a3a">--</span></span>
+      <span style="color:#0d2030;">·</span>
+      <span class="tick"><span class="tick-sym">SOL</span><span class="tick-price" id="tick-SOL">--</span><span class="tick-pct" id="tick-SOL-pct" style="color:#1a4a3a">--</span></span>
+      <span style="color:#0d2030;">·</span>
+      <span class="tick"><span class="tick-sym">BNB</span><span class="tick-price" id="tick-BNB">--</span><span class="tick-pct" id="tick-BNB-pct" style="color:#1a4a3a">--</span></span>
     </div>
   </div>
 
@@ -307,15 +313,16 @@ function reasoning(s, sig){
 }
 
 function renderTicker(){
-  document.getElementById('ticker').innerHTML = pairData.map(s=>{
-    const pc = s.pct24h>=0?'tick-pos':'tick-neg';
-    const sign = s.pct24h>=0?'+':'';
-    return `<span class="tick">
-      <span class="tick-sym">${s.sym}</span>
-      <span class="tick-price">${fPrice(s.price)}</span>
-      <span class="${pc}">${sign}${s.pct24h.toFixed(2)}%</span>
-    </span>`;
-  }).join('');
+  pairData.forEach(s=>{
+    const priceEl = document.getElementById('tick-'+s.sym);
+    const pctEl   = document.getElementById('tick-'+s.sym+'-pct');
+    if(priceEl) priceEl.textContent = fPrice(s.price);
+    if(pctEl){
+      const sign = s.pct24h>=0?'+':'';
+      pctEl.textContent = sign+s.pct24h.toFixed(2)+'%';
+      pctEl.style.color = s.pct24h>=0?'#00ff88':'#ff4466';
+    }
+  });
 }
 
 function renderTable(){
