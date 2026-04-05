@@ -281,6 +281,47 @@ async function processPair(pair) {
 let cache = { data: null, ts: 0 };
 const CACHE_TTL = 60 * 1000;
 
+// ── SIGNAL HISTORY (last 4 hours) ────────────────────────
+let signalHistory = []; // { sym, dir, score, conf, sl, tp1, tp2, trendNote, aligned, price, ts }
+const HISTORY_TTL = 4 * 60 * 60 * 1000; // 4 hours
+
+function addToHistory(pairResults) {
+  const now = Date.now();
+  // Remove signals older than 4 hours
+  signalHistory = signalHistory.filter(h => (now - h.ts) < HISTORY_TTL);
+  // Add new signals
+  pairResults.forEach(s => {
+    if (s.signals) {
+      s.signals.forEach(sig => {
+        // Avoid exact duplicates (same pair + direction within 5 minutes)
+        const isDupe = signalHistory.some(h =>
+          h.sym === s.sym && h.dir === sig.dir && (now - h.ts) < 5 * 60 * 1000
+        );
+        if (!isDupe) {
+          signalHistory.push({
+            sym:       s.sym,
+            price:     s.price,
+            dir:       sig.dir,
+            score:     sig.score,
+            conf:      sig.conf,
+            sl:        sig.sl,
+            tp1:       sig.tp1,
+            tp2:       sig.tp2,
+            swing:     sig.swing,
+            scalp:     sig.scalp,
+            aligned:   sig.aligned,
+            trendNote: sig.trendNote,
+            rsi:       s.rsi,
+            atr:       s.atr,
+            ts:        now,
+            timeStr:   new Date(now).toUTCString().slice(17, 25)
+          });
+        }
+      });
+    }
+  });
+}
+
 async function buildSignals() {
   console.log('Scanning BTC, ETH, SOL, BNB...');
   const results = await Promise.allSettled(PAIRS.map(processPair));
@@ -290,6 +331,7 @@ async function buildSignals() {
   });
   console.log(`Scan complete: ${data.length}/4 pairs`);
   if (data.length === 0) throw new Error('All requests failed');
+  addToHistory(data);
   return data;
 }
 
@@ -298,11 +340,23 @@ app.get('/api/scan', async (req, res) => {
   try {
     const now = Date.now();
     if (cache.data && (now - cache.ts) < CACHE_TTL) {
-      return res.json({ ok: true, data: cache.data, cached: true, timestamp: new Date().toISOString() });
+      return res.json({
+        ok: true,
+        data: cache.data,
+        history: signalHistory.slice().reverse(),
+        cached: true,
+        timestamp: new Date().toISOString()
+      });
     }
     const data = await buildSignals();
     cache = { data, ts: Date.now() };
-    res.json({ ok: true, data, cached: false, timestamp: new Date().toISOString() });
+    res.json({
+      ok: true,
+      data,
+      history: signalHistory.slice().reverse(), // newest first
+      cached: false,
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
     console.error('Scan error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
