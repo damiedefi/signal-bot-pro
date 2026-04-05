@@ -220,18 +220,7 @@ async function ccFetch(path) {
   return res.json();
 }
 
-async function processPair(pair) {
-  // Fetch 1H and 4H in parallel
-  const [data1h, data4h] = await Promise.all([
-    ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=100`),
-    ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=200&aggregate=4`)
-  ]);
-
-  if (data1h.Response !== 'Success') throw new Error(data1h.Message || '1H error');
-
-  const candles1h = data1h.Data.Data;
-  const candles4h = data4h.Response === 'Success' ? data4h.Data.Data : [];
-
+async function processPairData(pair, candles1h, candles4h) {
   if (candles1h.length < 26) throw new Error('Insufficient candles');
 
   const closes1h = candles1h.map(c => c.close);
@@ -253,27 +242,25 @@ async function processPair(pair) {
   const volRatio = mcap > 0 ? vol / mcap : 0;
 
   const signals = getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price);
-
-  // Overall pair summary for table
-  const topSignal = signals.sort((a, b) => b.score - a.score)[0];
-  const swing  = topSignal ? topSignal.swing  : 'HOLD';
-  const scalp  = topSignal ? topSignal.scalp  : 'HOLD';
-  const conf   = topSignal ? topSignal.conf   : 1;
-  const score  = topSignal ? topSignal.score  : 5;
-  const aligned    = topSignal ? topSignal.aligned    : null;
-  const trendNote  = topSignal ? topSignal.trendNote  : '';
+  const topSignal = [...signals].sort((a, b) => b.score - a.score)[0];
 
   console.log(
     `${pair.sym}: RSI=${rsi} MACD=${macd.bull?'BULL':'BEAR'} BB=${bb.pct}% ` +
-    `4H=${trend4h?trend4h.trend:'?'} BullScore=${scoreDirection(rsi,macd,bb,pct24h,volRatio,trend4h,'bull')} ` +
-    `BearScore=${scoreDirection(rsi,macd,bb,pct24h,volRatio,trend4h,'bear')} ATR=${atr.toFixed(2)}`
+    `4H=${trend4h?trend4h.trend:'?'} Bull=${scoreDirection(rsi,macd,bb,pct24h,volRatio,trend4h,'bull')} ` +
+    `Bear=${scoreDirection(rsi,macd,bb,pct24h,volRatio,trend4h,'bear')} → ${topSignal?topSignal.dir:'HOLD'}`
   );
 
   return {
-    sym: pair.sym, price, pct24h, vol, mcap, volRatio,
-    rsi, macd, bb, atr, trend4h,
-    score, swing, scalp, conf, aligned, trendNote,
-    signals // full list of active signals (may have both BUY + SELL in ranging market)
+    sym:      pair.sym,
+    price,    pct24h, vol, mcap, volRatio,
+    rsi,      macd,   bb,  atr,  trend4h,
+    score:    topSignal ? topSignal.score : 5,
+    swing:    topSignal ? topSignal.swing : 'HOLD',
+    scalp:    topSignal ? topSignal.scalp : 'HOLD',
+    conf:     topSignal ? topSignal.conf  : 1,
+    aligned:  topSignal ? topSignal.aligned   : null,
+    trendNote:topSignal ? topSignal.trendNote : '',
+    signals
   };
 }
 
@@ -323,13 +310,33 @@ function addToHistory(pairResults) {
 }
 
 async function buildSignals() {
-  console.log('Scanning BTC, ETH, SOL, BNB...');
-  const results = await Promise.allSettled(PAIRS.map(processPair));
-  const data = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-  results.filter(r => r.status === 'rejected').forEach((r, i) => {
-    console.error(`${PAIRS[i]?.sym}: ${r.reason?.message}`);
-  });
-  console.log(`Scan complete: ${data.length}/4 pairs`);
+  console.log('Scanning BTC, ETH, SOL, BNB — sequential fetches...');
+  const data = [];
+
+  for (const pair of PAIRS) {
+    try {
+      // Sequential with delay — guarantees CryptoCompare never rate-limits us
+      const data1h = await ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=100`);
+      await new Promise(r => setTimeout(r, 500));
+      const data4h = await ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=200&aggregate=4`);
+      await new Promise(r => setTimeout(r, 500));
+
+      const candles1h = data1h.Response === 'Success' ? data1h.Data.Data : [];
+      const candles4h = data4h.Response === 'Success' ? data4h.Data.Data : [];
+
+      if (candles1h.length < 26) {
+        console.error(`${pair.sym}: only ${candles1h.length} candles returned`);
+        continue;
+      }
+
+      const result = await processPairData(pair, candles1h, candles4h);
+      data.push(result);
+    } catch (e) {
+      console.error(`${pair.sym} failed: ${e.message}`);
+    }
+  }
+
+  console.log(`Scan complete: ${data.length}/4 pairs loaded`);
   if (data.length === 0) throw new Error('All requests failed');
   addToHistory(data);
   return data;
