@@ -122,6 +122,16 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
 .li{padding:3px 12px;border-bottom:0.5px solid #080e14;display:flex;gap:10px;font-size:10px;}
 .lt{color:#0d3020;min-width:55px;font-family:'Courier New',monospace;}
 .lbuy{color:#00ff88;}.lsell{color:#ff4466;}.linfo{color:#0066aa;}.lm{color:#1a4a3a;}.lerr{color:#ffaa00;}
+
+/* ── FILTER BAR ── */
+.filter-bar{display:flex;align-items:center;gap:6px;padding:7px 12px;border-bottom:0.5px solid #0d2030;background:#050a0e;flex-wrap:wrap;}
+.filter-label{font-size:9px;color:#1a4a3a;text-transform:uppercase;letter-spacing:1px;margin-right:4px;}
+.fbtn{font-size:9px;padding:3px 10px;border-radius:3px;border:0.5px solid #0d2030;background:transparent;color:#1a5a3a;cursor:pointer;letter-spacing:.5px;text-transform:uppercase;transition:all .1s;}
+.fbtn:hover{border-color:#0d4a2a;color:#00aa55;}
+.fbtn.active-buy{background:#0a2a1a;color:#00ff88;border-color:#0d4a2a;}
+.fbtn.active-sell{background:#2a0a14;color:#ff4466;border-color:#4a0d1e;}
+.fbtn.active-hc{background:#2a2200;color:#ffcc00;border-color:#4a3a00;}
+.fbtn.active-gen{background:#0a1a2a;color:#60a5fa;border-color:#0d2a4a;}
 </style>
 </head>
 <body>
@@ -191,6 +201,16 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
         <span class="panel-title">⬡ Live Monitor</span>
         <button class="scan-btn" id="scan-btn">⟳ Scan Now</button>
       </div>
+      <div class="filter-bar">
+        <span class="filter-label">Filter:</span>
+        <button class="fbtn" data-filter="buy"   onclick="setFilter('buy')"  >▲ BUY</button>
+        <button class="fbtn" data-filter="sell"  onclick="setFilter('sell')" >▼ SELL</button>
+        <button class="fbtn" data-filter="hc"    onclick="setFilter('hc')"   >★★★ Strong</button>
+        <button class="fbtn" data-filter="swing" onclick="setFilter('swing')">Swing</button>
+        <button class="fbtn" data-filter="scalp" onclick="setFilter('scalp')">Scalp</button>
+        <button class="fbtn" data-filter="watch" onclick="setFilter('watch')">Watch</button>
+        <button class="fbtn" data-filter="all"   onclick="setFilter('all')"  style="color:#0d3a2a;">✕ Clear</button>
+      </div>
       <table>
         <thead>
           <tr>
@@ -243,7 +263,7 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
 </div>
 
 <script>
-let pairData=[], logs=[], scanTimer=60, scanning=false, signalHistory=[], activeTab='active';
+let pairData=[], logs=[], scanTimer=60, scanning=false, signalHistory=[], activeTab='active', activeFilter='all';
 
 function ts(){ return new Date().toUTCString().slice(17,25); }
 function log(msg,type='info'){
@@ -325,6 +345,49 @@ function renderTicker(){
   });
 }
 
+function setFilter(f){
+  activeFilter = activeFilter === f && f !== 'all' ? 'all' : f;
+  // Update button styles
+  document.querySelectorAll('.fbtn').forEach(b => {
+    b.classList.remove('active-buy','active-sell','active-hc','active-gen');
+  });
+  if(activeFilter !== 'all'){
+    const btn = document.querySelector(`.fbtn[data-filter="${activeFilter}"]`);
+    if(btn){
+      if(activeFilter==='buy')  btn.classList.add('active-buy');
+      else if(activeFilter==='sell') btn.classList.add('active-sell');
+      else if(activeFilter==='hc')   btn.classList.add('active-hc');
+      else btn.classList.add('active-gen');
+    }
+  }
+  renderTable();
+  if(activeTab==='active') renderSignals(); else renderHistory();
+}
+
+function pairMatchesFilter(s){
+  if(activeFilter==='all') return true;
+  const buySig  = s.signals && s.signals.find(x=>x.dir==='BUY');
+  const sellSig = s.signals && s.signals.find(x=>x.dir==='SELL');
+  if(activeFilter==='buy')   return !!buySig;
+  if(activeFilter==='sell')  return !!sellSig;
+  if(activeFilter==='hc')    return s.signals && s.signals.some(x=>x.conf===3);
+  if(activeFilter==='swing') return (buySig&&buySig.swing==='BUY')||(sellSig&&sellSig.swing==='SELL');
+  if(activeFilter==='scalp') return !!buySig || !!sellSig;
+  if(activeFilter==='watch') return (buySig&&buySig.swing==='WATCH')||(sellSig&&sellSig.swing==='WATCH');
+  return true;
+}
+
+function sigMatchesFilter(sig){
+  if(activeFilter==='all') return true;
+  if(activeFilter==='buy')   return sig.dir==='BUY';
+  if(activeFilter==='sell')  return sig.dir==='SELL';
+  if(activeFilter==='hc')    return sig.conf===3;
+  if(activeFilter==='swing') return sig.swing==='BUY'||sig.swing==='SELL';
+  if(activeFilter==='scalp') return sig.dir==='BUY'||sig.dir==='SELL';
+  if(activeFilter==='watch') return sig.swing==='WATCH';
+  return true;
+}
+
 function renderTable(){
   const tbody = document.getElementById('tbody');
   if(!pairData.length){
@@ -333,6 +396,7 @@ function renderTable(){
   }
   // Always render all pairs — HOLD rows shown in muted style
   tbody.innerHTML = pairData.map(s => {
+    const matchesFilter = pairMatchesFilter(s);
     const buySig  = s.signals&&s.signals.find(x=>x.dir==='BUY');
     const sellSig = s.signals&&s.signals.find(x=>x.dir==='SELL');
     const topSig  = buySig||sellSig;
@@ -357,7 +421,7 @@ function renderTable(){
     const conf = topSig?topSig.conf:1;
     const starsCls = conf===3?'s3':conf===2?'s2':'s1';
 
-    return `<tr class="${rowCls}">
+    return `<tr class="${rowCls}" style="${matchesFilter?'':'opacity:0.25;'}">
       <td class="pair-name">${s.sym}<span style="color:#1a4a3a;">/USDT</span></td>
       <td class="mono">${fPrice(s.price)}</td>
       <td class="${s.pct24h>=0?'pos':'neg'}">${s.pct24h>=0?'+':''}${s.pct24h.toFixed(2)}%</td>
@@ -442,7 +506,9 @@ function renderHistory(){
 function renderSignals(){
   const allSigs=[];
   pairData.forEach(s=>{
-    if(s.signals) s.signals.forEach(sig=>allSigs.push({...sig, pairData:s}));
+    if(s.signals) s.signals.forEach(sig=>{
+      if(sigMatchesFilter(sig)) allSigs.push({...sig, pairData:s});
+    });
   });
   allSigs.sort((a,b)=>b.score-a.score);
 
