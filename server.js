@@ -173,6 +173,19 @@ function scoreDirection(rsi, macd, bb, pct24h, volRatio, trend4h, dir) {
 // ★★★ = score >= 7.5 + 4H aligned
 // ★★  = score >= 6 (including counter-trend)
 
+// ── STAR RATING — single source of truth ─────────────────
+// Stars come directly from score + alignment. Nothing else.
+// 8.5+ AND aligned = ★★★ (high conviction, trend confirmed)
+// 8.5+ but counter = ★★ (strong setup, against 4H — use caution)
+// 6.0–8.4           = ★★ (valid signal, moderate conviction)
+// Below 6           = no signal
+
+function getStars(score, aligned) {
+  if (score >= 8.5 && aligned) return 3;
+  if (score >= 6.0) return 2;
+  return 1;
+}
+
 function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
   const bullScore = scoreDirection(rsi, macd, bb, pct24h, volRatio, trend4h, 'bull');
   const bearScore = scoreDirection(rsi, macd, bb, pct24h, volRatio, trend4h, 'bear');
@@ -182,10 +195,10 @@ function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
   // BUY signal
   if (bullScore >= 6) {
     const aligned = !trend4h || trend4h.trend === 'bull';
-    const conf = (bullScore >= 7.5 && aligned) ? 3 : 2;
+    const conf = getStars(bullScore, aligned);
     const trendNote = aligned
       ? (trend4h ? `Trend-confirmed — 4H is BULL.` : '')
-      : `Counter-trend — 4H is BEAR. Capped at ★★.`;
+      : `Counter-trend — 4H is BEAR. Score ${bullScore}/10 but capped at ★★.`;
     results.push({
       dir: 'BUY', score: bullScore, conf,
       swing: bullScore >= 6.5 ? 'BUY' : 'WATCH',
@@ -200,10 +213,10 @@ function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
   // SELL signal
   if (bearScore >= 6) {
     const aligned = !trend4h || trend4h.trend === 'bear';
-    const conf = (bearScore >= 7.5 && aligned) ? 3 : 2;
+    const conf = getStars(bearScore, aligned);
     const trendNote = aligned
       ? (trend4h ? `Trend-confirmed — 4H is BEAR.` : '')
-      : `Counter-trend — 4H is BULL. Capped at ★★.`;
+      : `Counter-trend — 4H is BULL. Score ${bearScore}/10 but capped at ★★.`;
     results.push({
       dir: 'SELL', score: bearScore, conf,
       swing: bearScore >= 6.5 ? 'SELL' : 'WATCH',
