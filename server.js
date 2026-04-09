@@ -244,20 +244,25 @@ async function ccFetch(path) {
 async function processPairData(pair, candles1h, candles4h) {
   if (candles1h.length < 26) throw new Error('Insufficient candles');
 
-  const closes1h = candles1h.map(c => c.close);
-  const closes4h = candles4h.map(c => c.close);
-  const price    = closes1h[closes1h.length - 1];
+  // Drop last candle — it's the current open (incomplete) candle
+  // Using it skews BB and RSI since it hasn't closed yet
+  const confirmed1h = candles1h.slice(0, -1);
+  const confirmed4h = candles4h.length > 1 ? candles4h.slice(0, -1) : candles4h;
+
+  const closes1h = confirmed1h.map(c => c.close);
+  const closes4h = confirmed4h.map(c => c.close);
+  const price    = closes1h[closes1h.length - 1]; // last CONFIRMED close
 
   const rsi     = calcRSI(closes1h, 14);
   const macd    = calcMACD(closes1h);
   const bb      = calcBB(closes1h, 20);
-  const atr     = calcATR(candles1h, 14);
+  const atr     = calcATR(confirmed1h, 14);
   const trend4h = get4HTrend(closes4h);
 
   const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length - 24] : closes1h[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
 
-  const lastCandle = candles1h[candles1h.length - 1];
+  const lastCandle = confirmed1h[confirmed1h.length - 1];
   const vol      = lastCandle.volumeto || 0;
   const mcap     = pair.mcap || 0;
   const volRatio = mcap > 0 ? vol / mcap : 0;
@@ -345,7 +350,8 @@ async function buildSignals() {
       const candles1h = data1h.Response === 'Success' ? data1h.Data.Data : [];
       const candles4h = data4h.Response === 'Success' ? data4h.Data.Data : [];
 
-      if (candles1h.length < 26) {
+      if (candles1h.length < 27) {
+        // Need at least 27 so after dropping the open candle we still have 26
         console.error(`${pair.sym}: only ${candles1h.length} candles returned`);
         continue;
       }
