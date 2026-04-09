@@ -30,9 +30,12 @@ body{background:#060a0f;color:#c8d8e8;font-family:'Courier New',monospace;font-s
 .cv{color:#00ff88;}.rv{color:#ff4466;}.yv{color:#ffcc00;}.wv{color:#c8d8e8;}
 
 /* ── TICKER ── */
-.ticker-wrap{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;padding:6px 10px;margin-bottom:8px;overflow:hidden;}
-.ticker{display:flex;gap:20px;white-space:nowrap;}
-.tick{display:flex;align-items:center;gap:6px;font-size:11px;}
+.ticker-wrap{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;padding:0;margin-bottom:8px;overflow:hidden;height:32px;position:relative;}
+.ticker-track{display:flex;align-items:center;gap:0;white-space:nowrap;position:absolute;top:0;left:0;height:100%;animation:ticker-scroll 40s linear infinite;}
+.ticker-track:hover{animation-play-state:paused;}
+.ticker-segment{display:flex;align-items:center;gap:0;}
+@keyframes ticker-scroll{0%{transform:translateX(0);}100%{transform:translateX(-50%);}}
+.tick{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:0 16px;border-right:0.5px solid #0d2030;height:32px;}
 .tick-sym{color:#00ff88;font-weight:700;letter-spacing:.5px;}
 .tick-price{color:#c8d8e8;font-family:'Courier New',monospace;}
 .tick-pos{color:#00ff88;}.tick-neg{color:#ff4466;}
