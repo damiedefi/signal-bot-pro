@@ -5,12 +5,20 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
-// ── 4 PAIRS ONLY ──────────────────────────────────────────
+// ── 12 PAIRS — hardcoded, real klines, no rate limit risk ──
 const PAIRS = [
-  { sym: 'BTC', cc: 'BTC', mcap: 1.32e12 },
-  { sym: 'ETH', cc: 'ETH', mcap: 382e9 },
-  { sym: 'SOL', cc: 'SOL', mcap: 77e9 },
-  { sym: 'BNB', cc: 'BNB', mcap: 61e9 }
+  { sym: 'BTC',  cc: 'BTC',  mcap: 1.32e12 },
+  { sym: 'ETH',  cc: 'ETH',  mcap: 382e9   },
+  { sym: 'BNB',  cc: 'BNB',  mcap: 61e9    },
+  { sym: 'SOL',  cc: 'SOL',  mcap: 77e9    },
+  { sym: 'DOGE', cc: 'DOGE', mcap: 23e9    },
+  { sym: 'AVAX', cc: 'AVAX', mcap: 14e9    },
+  { sym: 'LINK', cc: 'LINK', mcap: 8.5e9   },
+  { sym: 'NEAR', cc: 'NEAR', mcap: 6.8e9   },
+  { sym: 'UNI',  cc: 'UNI',  mcap: 5.9e9   },
+  { sym: 'INJ',  cc: 'INJ',  mcap: 2.4e9   },
+  { sym: 'SUI',  cc: 'SUI',  mcap: 2.1e9   },
+  { sym: 'TAO',  cc: 'TAO',  mcap: 1.8e9   }
 ];
 
 // ── INDICATORS ────────────────────────────────────────────
@@ -310,7 +318,7 @@ function addToHistory(pairResults) {
 }
 
 async function buildSignals() {
-  console.log('Scanning BTC, ETH, SOL, BNB — sequential fetches...');
+  console.log(`Scanning ${PAIRS.length} pairs sequentially...`);
   const data = [];
 
   for (const pair of PAIRS) {
@@ -336,7 +344,7 @@ async function buildSignals() {
     }
   }
 
-  console.log(`Scan complete: ${data.length}/4 pairs loaded`);
+  console.log(`Scan complete: ${data.length}/12 pairs loaded`);
   if (data.length === 0) throw new Error('All requests failed');
   addToHistory(data);
   return data;
