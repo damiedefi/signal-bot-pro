@@ -292,25 +292,10 @@ function scoreColor(sc){
   if(sc>=6)   return '#ffcc00';
   return '#ff4466';
 }
-function confPct(s, dir){
-  let a=0;
-  if(dir==='BUY'){
-    if(s.rsi<45) a++;
-    if(s.macd&&s.macd.bull) a++;
-    if(s.bb&&s.bb.pctB<0.4) a++;
-    if(s.trend4h&&s.trend4h.trend==='bull') a++;
-  } else {
-    if(s.rsi>55) a++;
-    if(s.macd&&!s.macd.bull) a++;
-    if(s.bb&&s.bb.pctB>0.6) a++;
-    if(s.trend4h&&s.trend4h.trend==='bear') a++;
-  }
-  return Math.round((a/4)*100);
-}
-function leverage(cp){
-  if(cp>=80) return '3x–5x';
-  if(cp>=65) return '2x–3x';
-  if(cp>=50) return '1x–2x';
+function leverageFromScore(score, conf){
+  if(conf===3 && score>=9) return '3x–5x';
+  if(conf===3 && score>=8.5) return '2x–3x';
+  if(conf===2 && score>=7) return '1x–2x';
   return '1x spot';
 }
 function reasoning(s, sig){
@@ -488,7 +473,7 @@ function renderHistory(){
           <span class="si-score-small">/10</span>
         </div>
         <div class="si-meta">
-          <span style="font-size:9px;color:#1a5a3a;">${h.timeStr} UTC · ${'★'.repeat(h.conf)}${'☆'.repeat(3-h.conf)}</span>
+          <span style="font-size:9px;color:#1a5a3a;">${'★'.repeat(h.conf)}${'☆'.repeat(3-h.conf)} · ${h.timeStr} UTC</span>
           <span style="font-size:9px;color:#0d3020;">${timeAgo(h.ts)}</span>
         </div>
       </div>
@@ -525,8 +510,7 @@ function renderSignals(){
     const isHC = sig.conf===3;
     const dirCls = sig.dir==='BUY'?'buy':'sell';
     const scClass = sig.score>=7.5?'high':'mid';
-    const cp = confPct(s, sig.dir);
-    const lev = leverage(cp);
+    const lev = leverageFromScore(sig.score, sig.conf);
     const reason = reasoning(s, sig);
     const noteCls = sig.aligned?'confirmed':'counter';
     const scCol = scoreColor(sig.score);
@@ -542,10 +526,9 @@ function renderSignals(){
           <span class="si-score-small">/10</span>
         </div>
         <div class="si-meta">
-          <span class="si-conf ${scClass}">${cp}% confidence</span>
+          <span class="si-conf ${scClass}">${'★'.repeat(sig.conf)}${'☆'.repeat(3-sig.conf)} ${sig.conf===3?'High Conviction':sig.conf===2?'Moderate':'Weak'}</span>
           <div class="si-pills">
-            <span class="si-pill">${'★'.repeat(sig.conf)}${'☆'.repeat(3-sig.conf)}</span>
-            <span class="si-pill ${sig.aligned?'aligned':'counter'}">${sig.aligned?'✓ Aligned':'↯ Counter'}</span>
+            <span class="si-pill ${sig.aligned?'aligned':'counter'}">${sig.aligned?'✓ Trend Aligned':'↯ Counter-Trend'}</span>
             <span class="si-pill">${lev}</span>
           </div>
         </div>
