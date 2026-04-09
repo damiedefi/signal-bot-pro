@@ -143,7 +143,7 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
       <img src="/logo.png" alt="Defi Insider">
       <div>
         <div class="brand-name">Defi Insider <span>Signal Bot</span></div>
-        <div class="brand-sub">by DAMI-DEFI · BTC · ETH · SOL · BNB</div>
+        <div class="brand-sub" id="brand-sub">by DAMI-DEFI · 12 pairs · real klines</div>
       </div>
       <span class="badge"><span class="live-dot"></span>LIVE</span>
     </div>
@@ -154,8 +154,8 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
   <div class="stats">
     <div class="stat">
       <div class="stat-label">Pairs Tracked</div>
-      <div class="stat-val wv">4</div>
-      <div class="stat-sub">BTC · ETH · SOL · BNB</div>
+      <div class="stat-val wv" id="s-pairs">12</div>
+      <div class="stat-sub" id="s-pairs-sub">BTC · ETH · BNB · SOL + 8 more</div>
     </div>
     <div class="stat">
       <div class="stat-label">Buy Signals</div>
@@ -589,6 +589,8 @@ async function runScan(){
 
     pairData = json.data;
     if(json.history) signalHistory = json.history;
+    document.getElementById('s-pairs').textContent = pairData.length;
+    document.getElementById('s-pairs-sub').textContent = pairData.length + ' pairs loaded';
     let buys=0,sells=0,hc=0;
     pairData.forEach(s=>{
       if(s.signals) s.signals.forEach(sig=>{
