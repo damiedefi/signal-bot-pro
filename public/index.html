@@ -241,7 +241,7 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
     <!-- SIGNAL PANEL -->
     <div class="signal-panel">
       <div class="panel-header">
-        <span class="panel-title">⚡ Signals</span>
+        <span class="panel-title">⚡ ★★★ Signals Only</span>
         <div style="display:flex;gap:6px;align-items:center;">
           <span style="font-size:9px;color:#1a4a3a;" id="sig-count">0 signals</span>
           <button onclick="setTab('active')" id="tab-active" style="font-size:9px;padding:2px 7px;border-radius:3px;border:0.5px solid #0d4a2a;background:#0a2a1a;color:#00ff88;cursor:pointer;letter-spacing:.5px;">ACTIVE</button>
@@ -495,7 +495,8 @@ function renderSignals(){
   const allSigs=[];
   pairData.forEach(s=>{
     if(s.signals) s.signals.forEach(sig=>{
-      if(sigMatchesFilter(sig)) allSigs.push({...sig, pairData:s});
+      // Only ★★★ signals appear in the panel — ★★ still visible in the table
+      if(sig.conf===3 && sigMatchesFilter(sig)) allSigs.push({...sig, pairData:s});
     });
   });
   allSigs.sort((a,b)=>b.score-a.score);
@@ -504,7 +505,7 @@ function renderSignals(){
   const el = document.getElementById('signal-list');
 
   if(!allSigs.length){
-    el.innerHTML='<div class="no-sig">No active signals<br><span style="color:#0d3020">Market ranging or consolidating<br>Next scan in '+scanTimer+'s</span></div>';
+    el.innerHTML='<div class="no-sig">No ★★★ signals active<br><span style="color:#0d3020">★★ signals visible in table<br>Next scan in '+scanTimer+'s</span></div>';
     return;
   }
 
