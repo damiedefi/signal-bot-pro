@@ -5,6 +5,67 @@ const app = express();
 app.use(cors());
 app.use(express.static('public'));
 
+// ── TELEGRAM NOTIFICATIONS ────────────────────────────────
+const TG_TOKEN   = process.env.TG_TOKEN   || '8657562447:AAGGn9GzBf8mHyP44ZAukdM702ls_NlboDI';
+const TG_CHAT_ID = process.env.TG_CHAT_ID || '5337031418';
+
+async function sendTelegram(message) {
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TG_CHAT_ID,
+        text: message,
+        parse_mode: 'HTML'
+      })
+    });
+    console.log('Telegram notification sent');
+  } catch (e) {
+    console.error('Telegram error:', e.message);
+  }
+}
+
+function formatTelegramSignal(s, sig) {
+  const dir     = sig.dir === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+  const stars   = '⭐'.repeat(sig.conf);
+  const aligned = sig.aligned ? '✅ Trend Aligned' : '⚠️ Counter-Trend';
+  const lev     = leverageFromScore(sig.score, sig.conf);
+
+  return `${dir} <b>${s.sym}/USDT</b>
+${stars} ${sig.conf === 3 ? 'High Conviction' : 'Moderate'} — Score <b>${sig.score}/10</b>
+
+📍 Entry:    <b>${fmtPrice(s.price)}</b>
+🛑 Stop:     <b>${fmtPrice(sig.sl)}</b>
+🎯 TP1:      <b>${fmtPrice(sig.tp1)}</b>
+🎯 TP2:      <b>${fmtPrice(sig.tp2)}</b>
+⚡ Leverage: <b>${lev}</b>
+📊 ATR(14):  <b>${fmtPrice(s.atr)}</b>
+
+${aligned}
+<i>${sig.trendNote || ''}</i>
+
+🤖 Defi Insider Signal Bot`;
+}
+
+function fmtPrice(p) {
+  if (!p && p !== 0) return '--';
+  if (p >= 10000) return '$' + p.toLocaleString('en', { maximumFractionDigits: 0 });
+  if (p >= 1000)  return '$' + p.toLocaleString('en', { maximumFractionDigits: 1 });
+  if (p >= 1)     return '$' + p.toFixed(2);
+  if (p >= 0.01)  return '$' + p.toFixed(4);
+  return '$' + p.toFixed(6);
+}
+
+function leverageFromScore(score, conf) {
+  if (conf === 3 && score >= 9)   return '3x–5x';
+  if (conf === 3 && score >= 8.5) return '2x–3x';
+  if (conf === 2 && score >= 7)   return '1x–2x';
+  return '1x spot';
+}
+
 // ── 12 PAIRS — hardcoded, real klines, no rate limit risk ──
 const PAIRS = [
   { sym: 'BTC',  cc: 'BTC',  mcap: 1.32e12 },
@@ -311,6 +372,10 @@ function addToHistory(pairResults) {
           h.sym === s.sym && h.dir === sig.dir && (now - h.ts) < 5 * 60 * 1000
         );
         if (!isDupe) {
+          // Send Telegram notification for ★★★ signals only
+          if (sig.conf === 3) {
+            sendTelegram(formatTelegramSignal(s, sig));
+          }
           signalHistory.push({
             sym:       s.sym,
             price:     s.price,
