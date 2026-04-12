@@ -293,13 +293,27 @@ function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
 }
 
 // ── CRYPTOCOMPARE FETCH ───────────────────────────────────
-async function ccFetch(path) {
+async function ccFetch(path, retries = 3) {
   const { default: fetch } = await import('node-fetch');
-  const res = await fetch('https://min-api.cryptocompare.com' + path, {
-    headers: { 'Accept': 'application/json' }
-  });
-  if (!res.ok) throw new Error(`CryptoCompare ${res.status}`);
-  return res.json();
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch('https://min-api.cryptocompare.com' + path, {
+        headers: { 'Accept': 'application/json' }
+      });
+      if (res.status === 429) {
+        // Rate limited — wait longer and retry
+        console.log(`Rate limited, waiting 5s before retry ${attempt}/${retries}...`);
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
+      }
+      if (!res.ok) throw new Error(`CryptoCompare ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      if (attempt === retries) throw e;
+      console.log(`Fetch failed (attempt ${attempt}), retrying in 2s...`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
 }
 
 async function processPairData(pair, candles1h, candles4h) {
@@ -408,9 +422,9 @@ async function buildSignals() {
     try {
       // Sequential with delay — guarantees CryptoCompare never rate-limits us
       const data1h = await ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=100`);
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 1000));
       const data4h = await ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=200&aggregate=4`);
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 1000));
 
       const candles1h = data1h.Response === 'Success' ? data1h.Data.Data : [];
       const candles4h = data4h.Response === 'Success' ? data4h.Data.Data : [];
