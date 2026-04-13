@@ -135,6 +135,37 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
 .fbtn.active-sell{background:#2a0a14;color:#ff4466;border-color:#4a0d1e;}
 .fbtn.active-hc{background:#2a2200;color:#ffcc00;border-color:#4a3a00;}
 .fbtn.active-gen{background:#0a1a2a;color:#60a5fa;border-color:#0d2a4a;}
+
+/* ── TRADE TRACKER ── */
+.tracker-section{margin-bottom:8px;}
+.tracker-empty{padding:14px;text-align:center;color:#1a4a3a;font-size:10px;border:0.5px dashed #0d2030;border-radius:5px;background:#050a0e;}
+.trade-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:8px;}
+.trade-card{background:#080e14;border:0.5px solid #0d2030;border-radius:6px;overflow:hidden;}
+.trade-card.buy-card{border-left:2px solid #00ff88;}
+.trade-card.sell-card{border-left:2px solid #ff4466;}
+.trade-card.sl-hit{border-color:#ff4466;opacity:0.6;}
+.trade-card.tp1-hit{border-color:#ffcc00;}
+.tc-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:#050a0e;border-bottom:0.5px solid #0d2030;}
+.tc-pair{font-size:13px;font-weight:700;color:#fff;}
+.tc-dir-buy{font-size:10px;padding:2px 8px;border-radius:3px;background:#0a2a1a;color:#00ff88;font-weight:700;}
+.tc-dir-sell{font-size:10px;padding:2px 8px;border-radius:3px;background:#2a0a14;color:#ff4466;font-weight:700;}
+.tc-body{padding:10px 12px;}
+.tc-pnl{font-size:18px;font-weight:700;margin-bottom:8px;font-family:'Courier New',monospace;}
+.tc-pnl.pos{color:#00ff88;}.tc-pnl.neg{color:#ff4466;}.tc-pnl.neu{color:#c8d8e8;}
+.tc-levels{display:grid;grid-template-columns:1fr 1fr;gap:3px 8px;margin-bottom:8px;}
+.tc-level{display:flex;justify-content:space-between;padding:2px 0;border-bottom:0.5px solid #080e14;}
+.tc-level-l{font-size:9px;color:#1a4a3a;text-transform:uppercase;}
+.tc-level-v{font-size:10px;font-family:'Courier New',monospace;font-weight:600;}
+.tc-level-v.green{color:#00ff88;}.tc-level-v.red{color:#ff4466;}.tc-level-v.yellow{color:#ffcc00;}
+.tc-status{font-size:9px;padding:3px 8px;border-radius:3px;margin-bottom:8px;display:inline-block;}
+.tc-status.active{background:#0a2a1a;color:#00ff88;}
+.tc-status.tp1{background:#2a2200;color:#ffcc00;}
+.tc-status.sl{background:#2a0a14;color:#ff4466;}
+.tc-close-btn{width:100%;font-size:9px;padding:4px;border-radius:3px;border:0.5px solid #1a4a3a;background:transparent;color:#1a5a3a;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;}
+.tc-close-btn:hover{background:#0a1a0a;color:#00ff88;border-color:#00ff88;}
+.take-trade-btn{margin-top:8px;width:100%;font-size:10px;padding:5px;border-radius:3px;border:0.5px solid #0d4a2a;background:#0a2a1a;color:#00ff88;cursor:pointer;text-transform:uppercase;letter-spacing:.5px;font-weight:700;}
+.take-trade-btn:hover{background:#0d3a20;}
+.take-trade-btn.taken{background:#0a1a0a;color:#1a5a3a;border-color:#1a3a2a;cursor:default;}
 </style>
 </head>
 <body>
@@ -223,6 +254,7 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
             <th>RSI(14)</th>
             <th>MACD</th>
             <th>BB %</th>
+            <th>1H Trend</th>
             <th>4H Trend</th>
             <th>Volume</th>
             <th>ATR</th>
@@ -253,6 +285,17 @@ tr.row-hold td{border-left:2px solid #1a3a2a;}
       </div>
     </div>
 
+  </div>
+
+  <!-- TRADE TRACKER -->
+  <div class="tracker-section">
+    <div class="panel-header" style="background:#080e14;border:0.5px solid #0d2030;border-radius:5px 5px 0 0;padding:7px 12px;display:flex;align-items:center;justify-content:space-between;">
+      <span class="panel-title">📋 Trade Tracker</span>
+      <span style="font-size:9px;color:#1a4a3a;" id="tracker-count">0 open trades</span>
+    </div>
+    <div id="trade-tracker" style="background:#080e14;border:0.5px solid #0d2030;border-top:none;border-radius:0 0 5px 5px;padding:10px;">
+      <div class="tracker-empty">No open trades — click "I Took This Trade" on any ★★★ signal to start tracking</div>
+    </div>
   </div>
 
   <!-- BOT LOG -->
@@ -416,6 +459,7 @@ function renderTable(){
       <td class="${rsiCls}">${s.rsi}</td>
       <td class="${macdCls}">${macdTxt}</td>
       <td class="${bbCls}">${s.bb?s.bb.pct+'%':'--'}</td>
+      <td class="${s.trend1h&&s.trend1h.trend==='bull'?'pos':'neg'}">${s.trend1h?s.trend1h.trend.toUpperCase():'—'}</td>
       <td class="${tCls}">${tTxt}</td>
       <td class="neu">${fVol(s.vol)}</td>
       <td class="neu mono">${s.atr?fPrice(s.atr):'--'}</td>
@@ -551,6 +595,9 @@ function renderSignals(){
       </div>
       ${sig.trendNote?`<div class="si-note ${noteCls}">${sig.trendNote}</div>`:''}
       <div class="si-reason">${reason}</div>
+      <button class="take-trade-btn" id="btn-${s.sym}-${sig.dir}" onclick="takeTrade('${s.sym}','${sig.dir}',${s.price},${sig.sl},${sig.tp1},${sig.tp2},${sig.score},${sig.conf})">
+        📥 I Took This Trade
+      </button>
     </div>`;
   }).join('');
 }
@@ -560,6 +607,118 @@ function renderLog(){
     const cls=l.type==='buy'?'lbuy':l.type==='sell'?'lsell':l.type==='info'?'linfo':l.type==='err'?'lerr':'lm';
     return `<div class="li"><span class="lt">${l.t}</span><span class="${cls}">${l.msg}</span></div>`;
   }).join('');
+}
+
+// ── TRADE TRACKER ────────────────────────────────────────
+let openTrades = JSON.parse(localStorage.getItem('defi_trades') || '[]');
+
+function saveTrades(){ localStorage.setItem('defi_trades', JSON.stringify(openTrades)); }
+
+function takeTrade(sym, dir, entry, sl, tp1, tp2, score, conf){
+  const btn = document.getElementById(`btn-${sym}-${dir}`);
+  if(btn && btn.classList.contains('taken')) return;
+  const trade = { id: Date.now(), sym, dir, entry, sl, tp1, tp2, score, conf,
+    ts: ts(), status: 'active', tp1Hit: false };
+  openTrades.push(trade);
+  saveTrades();
+  renderTracker();
+  if(btn){ btn.textContent = '✅ Trade Logged'; btn.classList.add('taken'); }
+  // Notify Telegram
+  fetch('/api/trade-alert', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({sym, dir, entry: fPrice(entry), sl: fPrice(sl),
+      tp1: fPrice(tp1), tp2: fPrice(tp2), score, conf, type:'entered'})});
+  log(`Trade logged: ${dir} ${sym} @ ${fPrice(entry)}`,'info');
+}
+
+function closeTrade(id){
+  openTrades = openTrades.filter(t => t.id !== id);
+  saveTrades();
+  renderTracker();
+  log('Trade closed manually','info');
+}
+
+function checkTradeAlerts(){
+  if(!pairData.length) return;
+  openTrades.forEach(trade => {
+    const pair = pairData.find(p => p.sym === trade.sym);
+    if(!pair) return;
+    const price = pair.price;
+    // SL hit check
+    if(trade.dir==='BUY'  && price <= trade.sl && trade.status==='active'){
+      trade.status = 'sl_hit';
+      fetch('/api/trade-alert', {method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({sym:trade.sym,dir:trade.dir,entry:fPrice(trade.entry),
+          sl:fPrice(trade.sl),tp1:fPrice(trade.tp1),tp2:fPrice(trade.tp2),type:'sl_hit'})});
+      log(`⚠️ SL HIT: ${trade.sym} ${trade.dir}`,'sell');
+    }
+    if(trade.dir==='SELL' && price >= trade.sl && trade.status==='active'){
+      trade.status = 'sl_hit';
+      fetch('/api/trade-alert', {method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({sym:trade.sym,dir:trade.dir,entry:fPrice(trade.entry),
+          sl:fPrice(trade.sl),tp1:fPrice(trade.tp1),tp2:fPrice(trade.tp2),type:'sl_hit'})});
+      log(`⚠️ SL HIT: ${trade.sym} ${trade.dir}`,'sell');
+    }
+    // TP1 hit check
+    if(!trade.tp1Hit){
+      if(trade.dir==='BUY'  && price >= trade.tp1){
+        trade.tp1Hit = true;
+        fetch('/api/trade-alert', {method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({sym:trade.sym,dir:trade.dir,entry:fPrice(trade.entry),
+            tp1:fPrice(trade.tp1),type:'tp1_hit'})});
+        log(`🎯 TP1 HIT: ${trade.sym} ${trade.dir}`,'buy');
+      }
+      if(trade.dir==='SELL' && price <= trade.tp1){
+        trade.tp1Hit = true;
+        fetch('/api/trade-alert', {method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({sym:trade.sym,dir:trade.dir,entry:fPrice(trade.entry),
+            tp1:fPrice(trade.tp1),type:'tp1_hit'})});
+        log(`🎯 TP1 HIT: ${trade.sym} ${trade.dir}`,'buy');
+      }
+    }
+  });
+  saveTrades();
+  renderTracker();
+}
+
+function renderTracker(){
+  const el = document.getElementById('trade-tracker');
+  document.getElementById('tracker-count').textContent = openTrades.length + ' open trade' + (openTrades.length!==1?'s':'');
+  if(!openTrades.length){
+    el.innerHTML = '<div class="tracker-empty">No open trades — click "I Took This Trade" on any ★★★ signal to start tracking</div>';
+    return;
+  }
+  el.innerHTML = '<div class="trade-cards">' + openTrades.map(t => {
+    const pair  = pairData.find(p => p.sym === t.sym);
+    const price = pair ? pair.price : null;
+    const pnl   = price ? ((t.dir==='BUY' ? price-t.entry : t.entry-price) / t.entry * 100) : null;
+    const pnlCls= pnl===null?'neu':pnl>0?'pos':'neg';
+    const pnlTxt= pnl===null?'--':(pnl>=0?'+':'')+pnl.toFixed(2)+'%';
+    const distSL  = price ? Math.abs(price - t.sl).toFixed(4) : '--';
+    const distTP1 = price ? Math.abs(t.tp1 - price).toFixed(4) : '--';
+    const distTP2 = price ? Math.abs(t.tp2 - price).toFixed(4) : '--';
+    const statusCls = t.status==='sl_hit'?'sl':t.tp1Hit?'tp1':'active';
+    const statusTxt = t.status==='sl_hit'?'⚠️ Stop Loss Hit':t.tp1Hit?'🎯 TP1 Reached — move stop to breakeven':'🟢 Active';
+    const dirCls = t.dir==='BUY'?'buy-card':'sell-card';
+    return `<div class="trade-card ${dirCls} ${t.status==='sl_hit'?'sl-hit':''}">
+      <div class="tc-header">
+        <span class="tc-pair">${t.sym}/USDT</span>
+        <span class="tc-dir-${t.dir==='BUY'?'buy':'sell'}">${t.dir}</span>
+      </div>
+      <div class="tc-body">
+        <div class="tc-pnl ${pnlCls}">${pnlTxt} &nbsp;<span style="font-size:12px;color:#1a4a3a;">${price?fPrice(price):'--'}</span></div>
+        <div class="tc-levels">
+          <div class="tc-level"><span class="tc-level-l">Entry</span><span class="tc-level-v">${fPrice(t.entry)}</span></div>
+          <div class="tc-level"><span class="tc-level-l">Stop Loss</span><span class="tc-level-v red">${fPrice(t.sl)} <span style="color:#1a3a2a;font-size:8px;">(${distSL} away)</span></span></div>
+          <div class="tc-level"><span class="tc-level-l">TP1</span><span class="tc-level-v green">${fPrice(t.tp1)} <span style="color:#1a3a2a;font-size:8px;">(${distTP1} away)</span></span></div>
+          <div class="tc-level"><span class="tc-level-l">TP2</span><span class="tc-level-v green">${fPrice(t.tp2)} <span style="color:#1a3a2a;font-size:8px;">(${distTP2} away)</span></span></div>
+          <div class="tc-level"><span class="tc-level-l">Score</span><span class="tc-level-v yellow">${t.score}/10 ${'★'.repeat(t.conf)}${'☆'.repeat(3-t.conf)}</span></div>
+          <div class="tc-level"><span class="tc-level-l">Entered</span><span class="tc-level-v" style="color:#1a5a3a;">${t.ts} UTC</span></div>
+        </div>
+        <div class="tc-status ${statusCls}">${statusTxt}</div>
+        <button class="tc-close-btn" onclick="closeTrade(${t.id})">✕ Close Trade</button>
+      </div>
+    </div>`;
+  }).join('') + '</div>';
 }
 
 async function runScan(){
@@ -616,6 +775,7 @@ setInterval(()=>{
   }
 },1000);
 
+renderTracker();
 runScan();
 </script>
 </body>
