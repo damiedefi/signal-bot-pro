@@ -236,10 +236,11 @@ function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
 // ── CRYPTOCOMPARE FETCH ───────────────────────────────────
 // ── KRAKEN API FETCH — no rate limits, no key needed ─────
 // Kraken pair format: XBTUSD for BTC, ETHUSD for ETH, etc.
+// Kraken pair names verified against Kraken's asset list
+// BNB and TAO are not listed on Kraken — using CryptoCompare fallback for those
 const KRAKEN_MAP = {
   BTC:  'XBTUSD',
   ETH:  'ETHUSD',
-  BNB:  'BNBUSD',
   SOL:  'SOLUSD',
   DOGE: 'XDGUSD',
   AVAX: 'AVAXUSD',
@@ -248,8 +249,65 @@ const KRAKEN_MAP = {
   UNI:  'UNIUSD',
   INJ:  'INJUSD',
   SUI:  'SUIUSD',
-  TAO:  'TAOUSD'
+  // BNB and TAO not on Kraken — fetched via CryptoCompare
 };
+
+// CryptoCompare fallback for pairs not on Kraken
+async function ccFetchFallback(sym) {
+  const { default: fetch } = await import('node-fetch');
+  const [r1h, r4h] = await Promise.all([
+    fetch(`https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100`),
+    fetch(`https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100&aggregate=4`)
+  ]);
+  const [d1h, d4h] = await Promise.all([r1h.json(), r4h.json()]);
+  if (d1h.Response !== 'Success') throw new Error(`CC fallback failed for ${sym}`);
+  const map = arr => arr.slice(0,-1).map(c => ({
+    time: c.time, open: c.open, high: c.high,
+    low: c.low, close: c.close, volume: c.volumeto / (c.close||1)
+  }));
+  return {
+    candles1h: map(d1h.Data.Data),
+    candles4h: d4h.Response === 'Success' ? map(d4h.Data.Data) : []
+  };
+}
+
+// Pairs not available on Kraken — fetched from CryptoCompare as fallback
+const CC_FALLBACK = new Set(['BNB', 'TAO']);
+
+async function ccFetch(path) {
+  const { default: fetch } = await import('node-fetch');
+  const res = await fetch('https://min-api.cryptocompare.com' + path, {
+    headers: { 'Accept': 'application/json' }
+  });
+  if (!res.ok) throw new Error('CC ' + res.status);
+  return res.json();
+}
+
+async function fetchCandles(sym, interval1h, interval4h) {
+  // For pairs not on Kraken, fall back to CryptoCompare
+  if (CC_FALLBACK.has(sym)) {
+    const agg = interval4h === 240 ? 4 : 1;
+    const [d1h, d4h] = await Promise.all([
+      ccFetch(`/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100`),
+      ccFetch(`/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100&aggregate=4`)
+    ]);
+    const c1h = d1h.Response === 'Success' ? d1h.Data.Data.slice(0,-1).map(c=>({
+      time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto/c.close||0
+    })) : [];
+    const c4h = d4h.Response === 'Success' ? d4h.Data.Data.slice(0,-1).map(c=>({
+      time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto/c.close||0
+    })) : [];
+    return [c1h, c4h];
+  }
+  // Use Kraken for all other pairs
+  const krakenPair = KRAKEN_MAP[sym];
+  if (!krakenPair) throw new Error(`No mapping for ${sym}`);
+  const [c1h, c4h] = await Promise.all([
+    krakenFetch(krakenPair, 60, 100),
+    krakenFetch(krakenPair, 240, 100)
+  ]);
+  return [c1h, c4h];
+}
 
 async function krakenFetch(pair, interval, count = 200) {
   const { default: fetch } = await import('node-fetch');
@@ -374,19 +432,11 @@ async function buildSignals() {
   console.log(`Scanning ${PAIRS.length} pairs via Kraken...`);
   const data = [];
 
-  // Kraken allows parallel requests — no rate limiting on public endpoints
+  // Kraken: parallel requests, no rate limits
+  // BNB/TAO: fallback to CryptoCompare
   const results = await Promise.allSettled(PAIRS.map(async pair => {
-    const krakenPair = KRAKEN_MAP[pair.sym];
-    if (!krakenPair) throw new Error(`No Kraken mapping for ${pair.sym}`);
-
-    // Fetch 1H and 4H in parallel — Kraken handles it fine
-    const [candles1h, candles4h] = await Promise.all([
-      krakenFetch(krakenPair, 60,  100), // 1H candles
-      krakenFetch(krakenPair, 240, 100)  // 4H candles
-    ]);
-
+    const [candles1h, candles4h] = await fetchCandles(pair.sym, 60, 240);
     if (candles1h.length < 26) throw new Error(`Only ${candles1h.length} 1H candles`);
-
     return processPairData(pair, candles1h, candles4h);
   }));
 
