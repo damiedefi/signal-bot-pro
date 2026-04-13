@@ -155,6 +155,20 @@ function get4HTrend(closes4h) {
   };
 }
 
+// ── 1H TREND (informational only — not used for filtering) ─
+function get1HTrend(closes1h) {
+  if (!closes1h || closes1h.length < 21) return null;
+  const ema9  = calcEMA(closes1h, 9);
+  const ema21 = calcEMA(closes1h, 21);
+  const price = closes1h[closes1h.length - 1];
+  return {
+    trend:        ema9 > ema21 ? 'bull' : 'bear',
+    priceVsEMA9:  price > ema9 ? 'above' : 'below',
+    ema9:         +ema9.toFixed(4),
+    ema21:        +ema21.toFixed(4)
+  };
+}
+
 // ── SCORING ───────────────────────────────────────────────
 // Score 0–10. Both bull and bear directions scored.
 // Active mode: lower thresholds so signals fire regularly.
@@ -333,6 +347,7 @@ async function processPairData(pair, candles1h, candles4h) {
   const bb      = calcBB(closes1h, 20);
   const atr     = calcATR(confirmed1h, 14);
   const trend4h = get4HTrend(closes4h);
+  const trend1h = get1HTrend(closes1h); // informational only
 
   const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length - 24] : closes1h[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
@@ -354,7 +369,7 @@ async function processPairData(pair, candles1h, candles4h) {
   return {
     sym:      pair.sym,
     price,    pct24h, vol, mcap, volRatio,
-    rsi,      macd,   bb,  atr,  trend4h,
+    rsi,      macd,   bb,  atr,  trend4h, trend1h,
     score:    topSignal ? topSignal.score : 5,
     swing:    topSignal ? topSignal.swing : 'HOLD',
     scalp:    topSignal ? topSignal.scalp : 'HOLD',
@@ -474,6 +489,23 @@ app.get('/api/scan', async (req, res) => {
     console.error('Scan error:', e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+// ── TRADE ALERT ENDPOINT ─────────────────────────────────
+app.post('/api/trade-alert', express.json(), async (req, res) => {
+  const { sym, dir, entry, sl, tp1, tp2, score, conf, type } = req.body;
+  let message = '';
+  if (type === 'sl_hit') {
+    message = `🚨 <b>STOP LOSS HIT</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry}\nStop: ${sl}\n\nTrade closed at stop loss.\n\n🤖 Defi Insider Signal Bot`;
+  } else if (type === 'tp1_hit') {
+    message = `🎯 <b>TP1 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry}\nTP1: ${tp1}\n\nConsider moving stop to breakeven.\n\n🤖 Defi Insider Signal Bot`;
+  } else if (type === 'tp2_hit') {
+    message = `🏆 <b>TP2 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry}\nTP2: ${tp2}\n\nFull target hit!\n\n🤖 Defi Insider Signal Bot`;
+  } else if (type === 'entered') {
+    message = `📥 <b>TRADE ENTERED</b>\n\n${dir === 'BUY' ? '🟢' : '🔴'} <b>${sym}/USDT ${dir}</b>\nScore: ${score}/10 ${'⭐'.repeat(conf)}\n\n📍 Entry: ${entry}\n🛑 Stop:  ${sl}\n🎯 TP1:   ${tp1}\n🎯 TP2:   ${tp2}\n\n🤖 Defi Insider Signal Bot`;
+  }
+  if (message) await sendTelegram(message);
+  res.json({ ok: true });
 });
 
 app.get('/api/health', async (req, res) => {
