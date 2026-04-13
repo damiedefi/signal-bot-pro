@@ -234,53 +234,67 @@ function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
 }
 
 // ── CRYPTOCOMPARE FETCH ───────────────────────────────────
-async function ccFetch(path, retries = 3) {
+// ── KRAKEN API FETCH — no rate limits, no key needed ─────
+// Kraken pair format: XBTUSD for BTC, ETHUSD for ETH, etc.
+const KRAKEN_MAP = {
+  BTC:  'XBTUSD',
+  ETH:  'ETHUSD',
+  BNB:  'BNBUSD',
+  SOL:  'SOLUSD',
+  DOGE: 'XDGUSD',
+  AVAX: 'AVAXUSD',
+  LINK: 'LINKUSD',
+  NEAR: 'NEARUSD',
+  UNI:  'UNIUSD',
+  INJ:  'INJUSD',
+  SUI:  'SUIUSD',
+  TAO:  'TAOUSD'
+};
+
+async function krakenFetch(pair, interval, count = 200) {
   const { default: fetch } = await import('node-fetch');
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch('https://min-api.cryptocompare.com' + path, {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (res.status === 429) {
-        // Rate limited — wait longer and retry
-        console.log(`Rate limited, waiting 5s before retry ${attempt}/${retries}...`);
-        await new Promise(r => setTimeout(r, 5000));
-        continue;
-      }
-      if (!res.ok) throw new Error(`CryptoCompare ${res.status}`);
-      return await res.json();
-    } catch (e) {
-      if (attempt === retries) throw e;
-      console.log(`Fetch failed (attempt ${attempt}), retrying in 2s...`);
-      await new Promise(r => setTimeout(r, 2000));
-    }
-  }
+  // Kraken intervals: 60 = 1H, 240 = 4H
+  const since = Math.floor(Date.now() / 1000) - (interval * 60 * count);
+  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${interval}&since=${since}`;
+  const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  if (!res.ok) throw new Error(`Kraken ${res.status}`);
+  const json = await res.json();
+  if (json.error && json.error.length > 0) throw new Error(`Kraken error: ${json.error[0]}`);
+  // Kraken returns { result: { PAIRNAME: [[time,open,high,low,close,vwap,volume,count]], last: N } }
+  const resultKey = Object.keys(json.result).find(k => k !== 'last');
+  const candles = json.result[resultKey];
+  // Each candle: [time, open, high, low, close, vwap, volume, count]
+  // Kraken returns oldest first, last candle is current open — drop it
+  return candles.slice(0, -1).map(c => ({
+    time:   c[0],
+    open:   parseFloat(c[1]),
+    high:   parseFloat(c[2]),
+    low:    parseFloat(c[3]),
+    close:  parseFloat(c[4]),
+    volume: parseFloat(c[6])
+  }));
 }
 
 async function processPairData(pair, candles1h, candles4h) {
   if (candles1h.length < 26) throw new Error('Insufficient candles');
 
-  // Drop last candle — it's the current open (incomplete) candle
-  // Using it skews BB and RSI since it hasn't closed yet
-  const confirmed1h = candles1h.slice(0, -1);
-  const confirmed4h = candles4h.length > 1 ? candles4h.slice(0, -1) : candles4h;
-
-  const closes1h = confirmed1h.map(c => c.close);
-  const closes4h = confirmed4h.map(c => c.close);
-  const price    = closes1h[closes1h.length - 1]; // last CONFIRMED close
+  // Kraken already drops the open candle in krakenFetch — candles are clean
+  const closes1h = candles1h.map(c => c.close);
+  const closes4h = candles4h.map(c => c.close);
+  const price    = closes1h[closes1h.length - 1]; // last confirmed close
 
   const rsi     = calcRSI(closes1h, 14);
   const macd    = calcMACD(closes1h);
   const bb      = calcBB(closes1h, 20);
-  const atr     = calcATR(confirmed1h, 14);
+  const atr     = calcATR(candles1h, 14);
   const trend4h = get4HTrend(closes4h);
-  const trend1h = get1HTrend(closes1h); // informational only
+  const trend1h = get1HTrend(closes1h);
 
   const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length - 24] : closes1h[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
 
-  const lastCandle = confirmed1h[confirmed1h.length - 1];
-  const vol      = lastCandle.volumeto || 0;
+  const lastCandle = candles1h[candles1h.length - 1];
+  const vol      = (lastCandle.volume || 0) * price; // convert to USD volume
   const mcap     = pair.mcap || 0;
   const volRatio = mcap > 0 ? vol / mcap : 0;
 
@@ -357,35 +371,35 @@ function addToHistory(pairResults) {
 }
 
 async function buildSignals() {
-  console.log(`Scanning ${PAIRS.length} pairs sequentially...`);
+  console.log(`Scanning ${PAIRS.length} pairs via Kraken...`);
   const data = [];
 
-  for (const pair of PAIRS) {
-    try {
-      // Sequential with delay — guarantees CryptoCompare never rate-limits us
-      const data1h = await ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=100`);
-      await new Promise(r => setTimeout(r, 1000));
-      const data4h = await ccFetch(`/data/v2/histohour?fsym=${pair.cc}&tsym=USDT&limit=200&aggregate=4`);
-      await new Promise(r => setTimeout(r, 1000));
+  // Kraken allows parallel requests — no rate limiting on public endpoints
+  const results = await Promise.allSettled(PAIRS.map(async pair => {
+    const krakenPair = KRAKEN_MAP[pair.sym];
+    if (!krakenPair) throw new Error(`No Kraken mapping for ${pair.sym}`);
 
-      const candles1h = data1h.Response === 'Success' ? data1h.Data.Data : [];
-      const candles4h = data4h.Response === 'Success' ? data4h.Data.Data : [];
+    // Fetch 1H and 4H in parallel — Kraken handles it fine
+    const [candles1h, candles4h] = await Promise.all([
+      krakenFetch(krakenPair, 60,  100), // 1H candles
+      krakenFetch(krakenPair, 240, 100)  // 4H candles
+    ]);
 
-      if (candles1h.length < 27) {
-        // Need at least 27 so after dropping the open candle we still have 26
-        console.error(`${pair.sym}: only ${candles1h.length} candles returned`);
-        continue;
-      }
+    if (candles1h.length < 26) throw new Error(`Only ${candles1h.length} 1H candles`);
 
-      const result = await processPairData(pair, candles1h, candles4h);
-      data.push(result);
-    } catch (e) {
-      console.error(`${pair.sym} failed: ${e.message}`);
+    return processPairData(pair, candles1h, candles4h);
+  }));
+
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') {
+      data.push(r.value);
+    } else {
+      console.error(`${PAIRS[i].sym}: ${r.reason.message}`);
     }
-  }
+  });
 
-  console.log(`Scan complete: ${data.length}/12 pairs loaded`);
-  if (data.length === 0) throw new Error('All requests failed');
+  console.log(`Scan complete: ${data.length}/${PAIRS.length} pairs loaded`);
+  if (data.length === 0) throw new Error('All Kraken requests failed');
   addToHistory(data);
   return data;
 }
@@ -438,14 +452,14 @@ app.post('/api/trade-alert', express.json(), async (req, res) => {
 app.get('/api/health', async (req, res) => {
   try {
     const { default: fetch } = await import('node-fetch');
-    const r = await fetch('https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USDT');
-    const d = await r.json();
+    const candles = await krakenFetch('XBTUSD', 60, 2);
+    const btcPrice = candles[candles.length - 1]?.close;
     res.json({
       ok: true,
-      cryptocompare: d.USDT ? 'connected' : 'error',
-      btcPrice: d.USDT ? '$' + d.USDT.toLocaleString() : null,
+      kraken: btcPrice ? 'connected' : 'error',
+      btcPrice: btcPrice ? '$' + btcPrice.toLocaleString() : null,
       pairs: PAIRS.map(p => p.sym),
-      scoring: 'weighted 0-10, active thresholds (>=6)',
+      scoring: 'sequential hierarchy — trend + MACD gate',
       atr: 'real 14-period from OHLC'
     });
   } catch (e) {
