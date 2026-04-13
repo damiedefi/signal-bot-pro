@@ -169,79 +169,6 @@ function get1HTrend(closes1h) {
   };
 }
 
-// ── SCORING ───────────────────────────────────────────────
-// Score 0–10. Both bull and bear directions scored.
-// Active mode: lower thresholds so signals fire regularly.
-
-function scoreDirection(rsi, macd, bb, pct24h, volRatio, trend4h, dir) {
-  let score = 5;
-
-  if (dir === 'bull') {
-    // RSI — oversold = strong bull signal
-    if      (rsi < 25) score += 3.5;
-    else if (rsi < 30) score += 3.0;
-    else if (rsi < 38) score += 2.0;
-    else if (rsi < 45) score += 0.5;
-    else if (rsi > 60) score -= 1.5;
-    else if (rsi > 70) score -= 2.5;
-
-    // MACD
-    if (macd.bull) score += 2.0; else score -= 1.5;
-
-    // BB — lower band = bullish
-    if      (bb.pctB < 0.1) score += 2.5;
-    else if (bb.pctB < 0.2) score += 2.0;
-    else if (bb.pctB < 0.3) score += 1.0;
-    else if (bb.pctB > 0.8) score -= 1.5;
-
-    // 24h momentum
-    if      (pct24h > 3)  score += 1.0;
-    else if (pct24h > 1)  score += 0.5;
-    else if (pct24h < -3) score -= 1.0;
-
-    // 4H soft bias
-    if (trend4h) {
-      if (trend4h.trend === 'bull') score += 1.0;
-      else score -= 0.5;
-    }
-
-  } else { // bear
-    // RSI — overbought = strong bear signal
-    if      (rsi > 75) score += 3.5;
-    else if (rsi > 70) score += 3.0;
-    else if (rsi > 62) score += 2.0;
-    else if (rsi > 55) score += 0.5;
-    else if (rsi < 40) score -= 1.5;
-    else if (rsi < 30) score -= 2.5;
-
-    // MACD
-    if (!macd.bull) score += 2.0; else score -= 1.5;
-
-    // BB — upper band = bearish
-    if      (bb.pctB > 0.9) score += 2.5;
-    else if (bb.pctB > 0.8) score += 2.0;
-    else if (bb.pctB > 0.7) score += 1.0;
-    else if (bb.pctB < 0.2) score -= 1.5;
-
-    // 24h momentum
-    if      (pct24h < -3) score += 1.0;
-    else if (pct24h < -1) score += 0.5;
-    else if (pct24h > 3)  score -= 1.0;
-
-    // 4H soft bias
-    if (trend4h) {
-      if (trend4h.trend === 'bear') score += 1.0;
-      else score -= 0.5;
-    }
-  }
-
-  // Volume
-  if (volRatio < 0.005) score -= 1.5;
-  else if (volRatio < 0.01) score -= 0.5;
-  else if (volRatio > 0.05) score += 0.5;
-
-  return Math.max(0, Math.min(10, +score.toFixed(1)));
-}
 
 // ── SIGNAL DECISION ───────────────────────────────────────
 // Active thresholds: score >= 6 = signal fires
@@ -357,13 +284,13 @@ async function processPairData(pair, candles1h, candles4h) {
   const mcap     = pair.mcap || 0;
   const volRatio = mcap > 0 ? vol / mcap : 0;
 
-  const signals = getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price);
+  const signals = getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, trend1h, atr, price);
   const topSignal = [...signals].sort((a, b) => b.score - a.score)[0];
 
   console.log(
     `${pair.sym}: RSI=${rsi} MACD=${macd.bull?'BULL':'BEAR'} BB=${bb.pct}% ` +
-    `4H=${trend4h?trend4h.trend:'?'} Bull=${scoreDirection(rsi,macd,bb,pct24h,volRatio,trend4h,'bull')} ` +
-    `Bear=${scoreDirection(rsi,macd,bb,pct24h,volRatio,trend4h,'bear')} → ${topSignal?topSignal.dir:'HOLD'}`
+    `1H=${trend1h?trend1h.trend:'?'} 4H=${trend4h?trend4h.trend:'?'} ` +
+    `→ ${topSignal?topSignal.dir+' '+topSignal.score:'NO SIGNAL'}`
   );
 
   return {
