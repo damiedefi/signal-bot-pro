@@ -309,29 +309,7 @@ async function fetchCandles(sym, interval1h, interval4h) {
   return [c1h, c4h];
 }
 
-async function krakenFetch(pair, interval, count = 200) {
-  const { default: fetch } = await import('node-fetch');
-  // Kraken intervals: 60 = 1H, 240 = 4H
-  const since = Math.floor(Date.now() / 1000) - (interval * 60 * count);
-  const url = `https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=${interval}&since=${since}`;
-  const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-  if (!res.ok) throw new Error(`Kraken ${res.status}`);
-  const json = await res.json();
-  if (json.error && json.error.length > 0) throw new Error(`Kraken error: ${json.error[0]}`);
-  // Kraken returns { result: { PAIRNAME: [[time,open,high,low,close,vwap,volume,count]], last: N } }
-  const resultKey = Object.keys(json.result).find(k => k !== 'last');
-  const candles = json.result[resultKey];
-  // Each candle: [time, open, high, low, close, vwap, volume, count]
-  // Kraken returns oldest first, last candle is current open — drop it
-  return candles.slice(0, -1).map(c => ({
-    time:   c[0],
-    open:   parseFloat(c[1]),
-    high:   parseFloat(c[2]),
-    low:    parseFloat(c[3]),
-    close:  parseFloat(c[4]),
-    volume: parseFloat(c[6])
-  }));
-}
+
 
 async function processPairData(pair, candles1h, candles4h) {
   if (candles1h.length < 26) throw new Error('Insufficient candles');
@@ -429,27 +407,45 @@ function addToHistory(pairResults) {
 }
 
 async function buildSignals() {
-  console.log(`Scanning ${PAIRS.length} pairs via Kraken...`);
+  console.log(`Scanning ${PAIRS.length} pairs — 1 call per pair...`);
   const data = [];
 
-  // Kraken: parallel requests, no rate limits
-  // BNB/TAO: fallback to CryptoCompare
-  const results = await Promise.allSettled(PAIRS.map(async pair => {
-    const [candles1h, candles4h] = await fetchCandles(pair.sym, 60, 240);
-    if (candles1h.length < 26) throw new Error(`Only ${candles1h.length} 1H candles`);
-    return processPairData(pair, candles1h, candles4h);
-  }));
+  for (const pair of PAIRS) {
+    try {
+      // One call: 200 x 1H candles = ~8 days of hourly data
+      const resp = await ccFetch(
+        `/data/v2/histohour?fsym=${pair.cc}&tsym=USD&limit=200`
+      );
+      // Drop last candle (open/incomplete)
+      const candles1h = resp.Data.Data.slice(0, -1).map(c => ({
+        time:   c.time,
+        open:   c.open,
+        high:   c.high,
+        low:    c.low,
+        close:  c.close,
+        volume: c.volumeto || 0
+      }));
 
-  results.forEach((r, i) => {
-    if (r.status === 'fulfilled') {
-      data.push(r.value);
-    } else {
-      console.error(`${PAIRS[i].sym}: ${r.reason.message}`);
+      if (candles1h.length < 30) {
+        console.error(`${pair.sym}: insufficient candles (${candles1h.length})`);
+        continue;
+      }
+
+      // Derive 4H candles from 1H — no extra API call needed
+      const candles4h = derive4HCandles(candles1h);
+
+      const result = await processPairData(pair, candles1h, candles4h);
+      data.push(result);
+      console.log(`✓ ${pair.sym}`);
+    } catch (e) {
+      console.error(`✗ ${pair.sym}: ${e.message}`);
     }
-  });
+    // 1.5s gap between pairs — well within CC free tier limits
+    await new Promise(r => setTimeout(r, 1500));
+  }
 
-  console.log(`Scan complete: ${data.length}/${PAIRS.length} pairs loaded`);
-  if (data.length === 0) throw new Error('All Kraken requests failed');
+  console.log(`Scan complete: ${data.length}/${PAIRS.length} pairs`);
+  if (data.length === 0) throw new Error('All requests failed');
   addToHistory(data);
   return data;
 }
@@ -502,15 +498,15 @@ app.post('/api/trade-alert', express.json(), async (req, res) => {
 app.get('/api/health', async (req, res) => {
   try {
     const { default: fetch } = await import('node-fetch');
-    const candles = await krakenFetch('XBTUSD', 60, 2);
-    const btcPrice = candles[candles.length - 1]?.close;
+    const resp = await ccFetch('/data/v2/histohour?fsym=BTC&tsym=USD&limit=2');
+    const btcPrice = resp.Data.Data[resp.Data.Data.length - 1]?.close;
     res.json({
       ok: true,
-      kraken: btcPrice ? 'connected' : 'error',
+      cryptocompare: btcPrice ? 'connected' : 'error',
       btcPrice: btcPrice ? '$' + btcPrice.toLocaleString() : null,
       pairs: PAIRS.map(p => p.sym),
-      scoring: 'sequential hierarchy — trend + MACD gate',
-      atr: 'real 14-period from OHLC'
+      method: 'single 1H fetch per pair, 4H derived',
+      scoring: 'sequential hierarchy — trend + MACD gate'
     });
   } catch (e) {
     res.json({ ok: false, error: e.message });
