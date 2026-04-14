@@ -713,11 +713,11 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Defi Insider Signal Bot on port ${PORT}`));
 
 // ══════════════════════════════════════════════════════════
-// BACKTESTER
-// Runs on startup. Walks 2000x 1H candles per pair,
-// simulates signal logic at each candle, checks outcome
-// by looking forward up to 24 candles for TP1/SL hit.
-// Results cached in memory and served via /api/backtest.
+// BACKTESTER — ORIGINAL METHODOLOGY
+// SL=1.5x ATR, TP1=2x ATR, TP2=3.5x ATR
+// Skip gap: 10 candles between signals
+// This matches the exact criteria used in live signals
+// DO NOT CHANGE — results must reflect actual traded methodology
 // ══════════════════════════════════════════════════════════
 
 let backtestResults = null;
@@ -813,21 +813,13 @@ async function runBacktest() {
       if (candles.length < 100) { console.log(`${pair.sym}: insufficient history`); continue; }
 
       const pairSignals = [];
+      let lastSignalIdx = -10;
 
-      // KEY FIX: nextIdx tracks where to resume after each trade resolves.
-      // After a signal fires, we jump to the candle where it resolved (TP1/SL hit
-      // or 24H expired) — not just skip 10 candles. This prevents the backtest
-      // from firing overlapping signals in the same trend run.
-      let nextIdx = 50;
+      for (let idx = 50; idx < candles.length - 24; idx++) {
+        if (idx - lastSignalIdx < 10) continue;
 
-      while (nextIdx < candles.length - 25) {
-        const idx = nextIdx;
         const result = runSignalLogicAt(candles, idx);
-
-        if (!result) {
-          nextIdx++;
-          continue;
-        }
+        if (!result) continue;
 
         const { signal } = result;
         const outcome = checkOutcome(candles, idx, signal);
@@ -845,12 +837,8 @@ async function runBacktest() {
           ...outcome
         });
 
+        lastSignalIdx = idx;
         allResults.push(pairSignals[pairSignals.length - 1]);
-
-        // Resume scanning AFTER this trade resolved — no overlapping trades
-        // outcome.hours = how many candles forward until resolution
-        // Add 1 buffer candle before looking for next signal
-        nextIdx = idx + outcome.hours + 1;
       }
 
       pairResults[pair.sym] = pairSignals;
@@ -905,7 +893,7 @@ async function runBacktest() {
     totalSignals: allResults.length,
     candlesPer: 2000,
     daysBack: 83,
-    methodology: 'Original: SL=1.5x ATR, TP1=2x ATR, TP2=3.5x ATR',
+    methodology: 'SL=1.5x ATR, TP1=2x ATR, TP2=3.5x ATR — original traded methodology',
     ranAt: new Date().toISOString(),
     // Sample signals for display (last 50)
     recentSignals: allResults.slice(-50).reverse()
