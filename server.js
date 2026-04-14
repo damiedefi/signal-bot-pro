@@ -208,6 +208,23 @@ function scheduleDailySummary() {
 }
 scheduleDailySummary();
 
+// ── CANDLE CLOSE DETECTION ───────────────────────────────
+// Returns true if we are within the last 5 minutes of the
+// current 1H candle — i.e. minutes 55-59 of any hour.
+// Signals are only fired during this window to ensure they
+// are based on nearly-confirmed candle data.
+
+function isNearCandleClose() {
+  const minute = new Date().getUTCMinutes();
+  return minute >= 55; // last 5 minutes of the hour
+}
+
+function minutesToCandleClose() {
+  const minute = new Date().getUTCMinutes();
+  const second = new Date().getUTCSeconds();
+  return 59 - minute + (second === 0 ? 0 : 1);
+}
+
 // ── DATA FETCHING ─────────────────────────────────────────
 const pairCache = {};
 
@@ -660,20 +677,35 @@ const HISTORY_TTL = 4*60*60*1000;
 
 function addToHistory(results) {
   const now = Date.now();
+  const nearClose = isNearCandleClose();
   signalHistory = signalHistory.filter(h=>(now-h.ts)<HISTORY_TTL);
+
   results.forEach(s => {
     if (!s.signals) return;
     s.signals.forEach(sig => {
       const isDupe = signalHistory.some(h=>h.sym===s.sym&&h.dir===sig.dir&&(now-h.ts)<5*60*1000);
+
       if (!isDupe) {
-        if (sig.conf===3) { addSignalToLog(s,sig); sendTelegram(formatTGSignal(s,sig)); }
+        // Always add to history so table shows current state
         signalHistory.push({
           sym:s.sym, price:s.price, dir:sig.dir, score:sig.score,
           conf:sig.conf, sl:sig.sl, tp1:sig.tp1, tp2:sig.tp2,
           swing:sig.swing, scalp:sig.scalp, aligned:sig.aligned,
           trendNote:sig.trendNote, rsi:s.rsi, atr:s.atr,
-          ts:now, timeStr:new Date(now).toUTCString().slice(17,25)
+          ts:now, timeStr:new Date(now).toUTCString().slice(17,25),
+          confirmedAtClose: nearClose // flag whether this fired near close
         });
+
+        // Only log to performance tracker and send Telegram near candle close
+        // This ensures signals are based on nearly-confirmed candle data
+        if (sig.conf === 3 && nearClose) {
+          addSignalToLog(s, sig);
+          sendTelegram(formatTGSignal(s, sig));
+          console.log(`🔔 CONFIRMED SIGNAL (near candle close): ${sig.dir} ${s.sym} ${sig.score}/10 ★★★`);
+        } else if (sig.conf === 3 && !nearClose) {
+          const minsLeft = minutesToCandleClose();
+          console.log(`⏳ ${sig.dir} ${s.sym} ${sig.score}/10 ★★★ — waiting for candle close (${minsLeft}m left)`);
+        }
       }
     });
   });
@@ -735,6 +767,8 @@ app.get('/api/health', async (req, res) => {
     const price = candles[candles.length-1]?.close;
     res.json({ ok:true, source:'CryptoCompare', btcPrice:'$'+price?.toLocaleString(),
       pairs:PAIRS.map(p=>p.sym), cached:Object.keys(pairCache),
+      nearCandleClose: isNearCandleClose(),
+      minutesToClose: minutesToCandleClose(),
       signalLogic:'v4 — MACD gate + RSI/BB scoring + 4H bonus',
       signalsTracked:signalLog.length, stats:calcStats() });
   } catch(e) { res.json({ ok:false, error:e.message }); }
