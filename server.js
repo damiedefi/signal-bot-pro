@@ -15,7 +15,7 @@ const PAIRS = [
   { sym:'SOL',  cc:'SOL',  mcap:77e9 },
   { sym:'DOGE', cc:'DOGE', mcap:23e9 },
   { sym:'AVAX', cc:'AVAX', mcap:14e9 },
-  { sym:'LINK', cc:'LINK', mcap:8.5e9 },
+  { sym:'XRP',  cc:'XRP',  mcap:58e9  },
   { sym:'NEAR', cc:'NEAR', mcap:6.8e9 },
   { sym:'UNI',  cc:'UNI',  mcap:5.9e9 },
   { sym:'INJ',  cc:'INJ',  mcap:2.4e9 },
