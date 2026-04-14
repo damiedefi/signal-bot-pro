@@ -661,3 +661,213 @@ app.get('/api/health', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Defi Insider Signal Bot on port ${PORT}`));
+
+// ══════════════════════════════════════════════════════════
+// BACKTESTER
+// Runs on startup. Walks 2000x 1H candles per pair,
+// simulates signal logic at each candle, checks outcome
+// by looking forward up to 24 candles for TP1/SL hit.
+// Results cached in memory and served via /api/backtest.
+// ══════════════════════════════════════════════════════════
+
+let backtestResults = null;
+let backtestRunning = false;
+
+async function fetchHistoricalCandles(sym) {
+  const { default: fetch } = await import('node-fetch');
+  // Fetch maximum available: 2000 x 1H candles (~83 days)
+  const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=2000`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.Response !== 'Success') throw new Error(json.Message || 'CC error');
+  return json.Data.Data
+    .map(c => ({ time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto||0 }))
+    .filter(c => c.close > 0);
+}
+
+function runSignalLogicAt(candles, idx) {
+  // Need at least 50 candles of history before this point
+  if (idx < 50) return null;
+
+  const window1h = candles.slice(0, idx + 1);
+  const closes1h = window1h.map(c => c.close);
+
+  // Derive 4H candles from the 1H window
+  const window4h = derive4H(window1h);
+  const closes4h = window4h.map(c => c.close);
+
+  if (closes4h.length < 20) return null;
+
+  const rsi    = calcRSI(closes1h, 14);
+  const macd   = calcMACD(closes1h);
+  const bb     = calcBB(closes1h, 20);
+  const atr    = calcATR(window1h, 14);
+  const trend1h = getTrend(closes1h, 9, 21);
+  const trend4h = getTrend(closes4h, 20, 50);
+
+  // Use same vol ratio proxy (no mcap data in historical, use vol/price ratio)
+  const lastC   = window1h[window1h.length - 1];
+  const price   = lastC.close;
+  const volRatio = 0.02; // neutral — no mcap in historical data
+
+  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price);
+  return signals.length > 0 ? { signal: signals[0], rsi, macd, bb, atr, price } : null;
+}
+
+function checkOutcome(candles, fromIdx, signal) {
+  const { sl, tp1, dir } = signal;
+  const maxLookAhead = 24; // 24 hours forward
+
+  for (let i = fromIdx + 1; i < Math.min(fromIdx + maxLookAhead + 1, candles.length); i++) {
+    const c = candles[i];
+    const hoursElapsed = i - fromIdx;
+
+    if (dir === 'BUY') {
+      // Check high for TP1, low for SL
+      if (c.high >= tp1 && c.low <= sl) {
+        // Both hit same candle — use open to determine which first
+        return { result: c.open >= sl ? 'win' : 'loss', hours: hoursElapsed };
+      }
+      if (c.high >= tp1) return { result: 'win',   hours: hoursElapsed };
+      if (c.low  <= sl)  return { result: 'loss',  hours: hoursElapsed };
+    } else {
+      // SELL
+      if (c.low <= tp1 && c.high >= sl) {
+        return { result: c.open <= sl ? 'win' : 'loss', hours: hoursElapsed };
+      }
+      if (c.low  <= tp1) return { result: 'win',   hours: hoursElapsed };
+      if (c.high >= sl)  return { result: 'loss',  hours: hoursElapsed };
+    }
+  }
+  return { result: 'expired', hours: maxLookAhead };
+}
+
+async function runBacktest() {
+  if (backtestRunning) return;
+  backtestRunning = true;
+  console.log('🔬 Starting backtest across all 12 pairs...');
+
+  const allResults = [];
+  const pairResults = {};
+
+  for (const pair of PAIRS) {
+    try {
+      console.log(`Backtesting ${pair.sym}...`);
+      const candles = await fetchHistoricalCandles(pair.sym);
+      if (candles.length < 100) { console.log(`${pair.sym}: insufficient history`); continue; }
+
+      const pairSignals = [];
+      let lastSignalIdx = -10; // Prevent signals within 10 candles of each other
+
+      // Walk through candles from idx 50 to end
+      for (let idx = 50; idx < candles.length - 24; idx++) {
+        // Skip if too close to last signal (avoid overlapping trades)
+        if (idx - lastSignalIdx < 10) continue;
+
+        const result = runSignalLogicAt(candles, idx);
+        if (!result) continue;
+
+        const { signal } = result;
+        const outcome = checkOutcome(candles, idx, signal);
+
+        pairSignals.push({
+          sym:     pair.sym,
+          dir:     signal.dir,
+          conf:    signal.conf,
+          score:   signal.score,
+          price:   result.price,
+          sl:      signal.sl,
+          tp1:     signal.tp1,
+          rsi:     result.rsi,
+          time:    candles[idx].time,
+          ...outcome
+        });
+
+        lastSignalIdx = idx;
+        allResults.push(pairSignals[pairSignals.length - 1]);
+      }
+
+      pairResults[pair.sym] = pairSignals;
+      console.log(`${pair.sym}: ${pairSignals.length} signals found`);
+
+      // Delay between pairs to avoid rate limiting
+      await new Promise(r => setTimeout(r, 1500));
+    } catch(e) {
+      console.error(`Backtest ${pair.sym}: ${e.message}`);
+    }
+  }
+
+  // ── COMPILE STATS ──────────────────────────────────────
+  function compileStats(signals) {
+    const total   = signals.length;
+    const wins    = signals.filter(s => s.result === 'win');
+    const losses  = signals.filter(s => s.result === 'loss');
+    const expired = signals.filter(s => s.result === 'expired');
+    const resolved= wins.length + losses.length;
+    const winRate = resolved > 0 ? Math.round(wins.length / resolved * 100) : null;
+    const avgWinH  = wins.length   > 0 ? +(wins.reduce((s,x)=>s+x.hours,0)/wins.length).toFixed(1) : null;
+    const avgLossH = losses.length > 0 ? +(losses.reduce((s,x)=>s+x.hours,0)/losses.length).toFixed(1) : null;
+    return { total, wins:wins.length, losses:losses.length, expired:expired.length, resolved, winRate, avgWinH, avgLossH };
+  }
+
+  // By star rating
+  const byStars = {
+    3: compileStats(allResults.filter(s => s.conf === 3)),
+    2: compileStats(allResults.filter(s => s.conf === 2)),
+    1: compileStats(allResults.filter(s => s.conf === 1))
+  };
+
+  // By pair
+  const byPair = {};
+  PAIRS.forEach(p => {
+    byPair[p.sym] = compileStats(allResults.filter(s => s.sym === p.sym));
+  });
+
+  // By direction
+  const byDir = {
+    BUY:  compileStats(allResults.filter(s => s.dir === 'BUY')),
+    SELL: compileStats(allResults.filter(s => s.dir === 'SELL'))
+  };
+
+  // Overall
+  const overall = compileStats(allResults);
+
+  backtestResults = {
+    overall,
+    byStars,
+    byPair,
+    byDir,
+    totalSignals: allResults.length,
+    candlesPer: 2000,
+    daysBack: 83,
+    ranAt: new Date().toISOString(),
+    // Sample signals for display (last 50)
+    recentSignals: allResults.slice(-50).reverse()
+  };
+
+  console.log(`✅ Backtest complete: ${allResults.length} total signals`);
+  console.log(`★★★ win rate: ${byStars[3].winRate}% (${byStars[3].resolved} resolved)`);
+  console.log(`★★  win rate: ${byStars[2].winRate}% (${byStars[2].resolved} resolved)`);
+  console.log(`★   win rate: ${byStars[1].winRate}% (${byStars[1].resolved} resolved)`);
+
+  backtestRunning = false;
+}
+
+// Backtest route
+app.get('/api/backtest', (req, res) => {
+  if (!backtestResults && !backtestRunning) {
+    runBacktest();
+    return res.json({ ok: true, status: 'running', message: 'Backtest started, check back in 60s' });
+  }
+  if (backtestRunning) {
+    return res.json({ ok: true, status: 'running', message: 'Backtest in progress...' });
+  }
+  res.json({ ok: true, status: 'complete', results: backtestResults });
+});
+
+// Run backtest on startup (after 10 second delay to let server settle)
+setTimeout(() => {
+  console.log('Scheduling backtest in 10s...');
+  runBacktest();
+}, 10000);
