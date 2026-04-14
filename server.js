@@ -437,6 +437,56 @@ function getTrend(closes, fast, slow) {
 }
 
 // ── SIGNAL LOGIC ──────────────────────────────────────────
+// Backtest version — uses ORIGINAL TP/SL values to reflect actual traded methodology
+// TP1 = 2x ATR, TP2 = 3.5x ATR, SL = 1.5x ATR
+// Do NOT change these — they must match how we were trading
+function getSignalsBacktest(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
+  if (trend1h && trend4h && trend1h.trend !== trend4h.trend) return [];
+  const trendDir = trend4h?.trend || trend1h?.trend || null;
+  if (!trendDir) return [];
+  if (trendDir === 'bull' && !macd.bull) return [];
+  if (trendDir === 'bear' &&  macd.bull) return [];
+  const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
+  let score = 6.0;
+  if (trendDir === 'bull') {
+    if      (rsi < 30) score += 2.5;
+    else if (rsi < 38) score += 1.5;
+    else if (rsi < 45) score += 0.5;
+    else if (rsi > 65) score -= 1.5;
+    else if (rsi > 55) score -= 0.5;
+    if      (bbB < 0.20) score += 1.5;
+    else if (bbB < 0.35) score += 0.5;
+    else if (bbB > 0.80) score -= 1.0;
+  } else {
+    if      (rsi > 70) score += 2.5;
+    else if (rsi > 62) score += 1.5;
+    else if (rsi > 55) score += 0.5;
+    else if (rsi < 35) score -= 1.5;
+    else if (rsi < 45) score -= 0.5;
+    if      (bbB > 0.80) score += 1.5;
+    else if (bbB > 0.65) score += 0.5;
+    else if (bbB < 0.20) score -= 1.0;
+  }
+  if      (volRatio > 0.05)  score += 0.5;
+  else if (volRatio < 0.005) score -= 1.0;
+  score = Math.max(0, Math.min(10, +score.toFixed(1)));
+  const conf = score >= 8.5 ? 3 : score >= 6.5 ? 2 : 1;
+  const trendNote = `1H: ${trend1h?.trend?.toUpperCase()||'?'} · 4H: ${trend4h?.trend?.toUpperCase()||'?'}`;
+  if (trendDir === 'bull') {
+    return [{ dir:'BUY', score, conf, aligned:true, trendNote,
+      sl:  +(price - atr*1.5).toFixed(4),
+      tp1: +(price + atr*2.0).toFixed(4),  // ORIGINAL — do not change
+      tp2: +(price + atr*3.5).toFixed(4)   // ORIGINAL — do not change
+    }];
+  } else {
+    return [{ dir:'SELL', score, conf, aligned:true, trendNote,
+      sl:  +(price + atr*1.5).toFixed(4),
+      tp1: +(price - atr*2.0).toFixed(4),  // ORIGINAL — do not change
+      tp2: +(price - atr*3.5).toFixed(4)   // ORIGINAL — do not change
+    }];
+  }
+}
+
 function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
   // Step 1: Trend gate — 1H and 4H must agree
   if (trend1h && trend4h && trend1h.trend !== trend4h.trend) return [];
@@ -855,6 +905,7 @@ async function runBacktest() {
     totalSignals: allResults.length,
     candlesPer: 2000,
     daysBack: 83,
+    methodology: 'Original: SL=1.5x ATR, TP1=2x ATR, TP2=3.5x ATR',
     ranAt: new Date().toISOString(),
     // Sample signals for display (last 50)
     recentSignals: allResults.slice(-50).reverse()
