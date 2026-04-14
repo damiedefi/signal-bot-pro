@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -33,11 +35,11 @@ async function sendTelegram(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: 'HTML' })
     });
-  } catch (e) { console.error('TG error:', e.message); }
+  } catch(e) { console.error('TG:', e.message); }
 }
 
 function fmtP(p) {
-  if (!p) return '--';
+  if (!p && p !== 0) return '--';
   if (p >= 10000) return '$' + Math.round(p).toLocaleString();
   if (p >= 1)     return '$' + p.toFixed(2);
   if (p >= 0.01)  return '$' + p.toFixed(4);
@@ -66,10 +68,246 @@ ${sig.trendNote}
 🤖 Defi Insider Signal Bot`;
 }
 
-// ── DATA FETCHING ─────────────────────────────────────────
-// One CryptoCompare call per pair, 4H derived from 1H grouping
-// Per-pair cache so failed fetches use last good data
+// ── SIGNAL PERFORMANCE LOG ────────────────────────────────
+const LOG_FILE = path.join(__dirname, 'signals-log.json');
 
+function loadLog() {
+  try {
+    if (fs.existsSync(LOG_FILE)) {
+      return JSON.parse(fs.readFileSync(LOG_FILE, 'utf8'));
+    }
+  } catch(e) { console.error('Log load error:', e.message); }
+  return [];
+}
+
+function saveLog(log) {
+  try {
+    fs.writeFileSync(LOG_FILE, JSON.stringify(log, null, 2));
+  } catch(e) { console.error('Log save error:', e.message); }
+}
+
+let signalLog = loadLog();
+
+function addSignalToLog(s, sig) {
+  // Avoid duplicates within 5 minutes
+  const now = Date.now();
+  const isDupe = signalLog.some(e =>
+    e.sym === s.sym && e.dir === sig.dir && (now - e.firedAt) < 5*60*1000
+  );
+  if (isDupe) return;
+
+  const entry = {
+    id:         now + '_' + s.sym + '_' + sig.dir,
+    sym:        s.sym,
+    dir:        sig.dir,
+    score:      sig.score,
+    conf:       sig.conf,
+    entryPrice: s.price,
+    sl:         sig.sl,
+    tp1:        sig.tp1,
+    tp2:        sig.tp2,
+    trendNote:  sig.trendNote,
+    firedAt:    now,
+    firedStr:   new Date(now).toUTCString().slice(0, 25),
+    check1H:    null,
+    check4H:    null,
+    check24H:   null,
+    finalResult:'pending'
+  };
+
+  signalLog.push(entry);
+  // Keep last 500 signals
+  if (signalLog.length > 500) signalLog = signalLog.slice(-500);
+  saveLog(signalLog);
+  console.log(`📝 Signal logged: ${sig.dir} ${s.sym} @ ${fmtP(s.price)}`);
+}
+
+function calcPnL(entry, currentPrice) {
+  if (entry.dir === 'BUY') {
+    return +((currentPrice - entry.entryPrice) / entry.entryPrice * 100).toFixed(2);
+  } else {
+    return +((entry.entryPrice - currentPrice) / entry.entryPrice * 100).toFixed(2);
+  }
+}
+
+function checkResult(entry, currentPrice) {
+  if (entry.dir === 'BUY') {
+    if (currentPrice >= entry.tp1) return 'win';
+    if (currentPrice <= entry.sl)  return 'loss';
+  } else {
+    if (currentPrice <= entry.tp1) return 'win';
+    if (currentPrice >= entry.sl)  return 'loss';
+  }
+  return 'pending';
+}
+
+async function updateSignalLog(pairData) {
+  const now = Date.now();
+  let changed = false;
+
+  for (const entry of signalLog) {
+    if (entry.finalResult !== 'pending') continue;
+
+    const pair = pairData.find(p => p.sym === entry.sym);
+    if (!pair) continue;
+
+    const price   = pair.price;
+    const elapsed = now - entry.firedAt;
+    const pnl     = calcPnL(entry, price);
+    const result  = checkResult(entry, price);
+
+    // 1H checkpoint
+    if (!entry.check1H && elapsed >= 60*60*1000) {
+      entry.check1H = { price, pnl, result, ts: now };
+      changed = true;
+      console.log(`1H check ${entry.sym} ${entry.dir}: ${result} (${pnl}%)`);
+    }
+
+    // 4H checkpoint
+    if (!entry.check4H && elapsed >= 4*60*60*1000) {
+      entry.check4H = { price, pnl, result, ts: now };
+      changed = true;
+      console.log(`4H check ${entry.sym} ${entry.dir}: ${result} (${pnl}%)`);
+    }
+
+    // 24H checkpoint — final
+    if (!entry.check24H && elapsed >= 24*60*60*1000) {
+      entry.check24H = { price, pnl, result, ts: now };
+      entry.finalResult = result === 'pending' ? 'expired' : result;
+      entry.resolvedAt = now;
+      changed = true;
+      console.log(`24H FINAL ${entry.sym} ${entry.dir}: ${entry.finalResult} (${pnl}%)`);
+
+      // Telegram final result
+      const emoji = entry.finalResult === 'win' ? '✅' : entry.finalResult === 'loss' ? '❌' : '⏰';
+      await sendTelegram(
+        `${emoji} <b>Signal Result: ${entry.finalResult.toUpperCase()}</b>\n\n` +
+        `<b>${entry.dir} ${entry.sym}/USDT</b>\n` +
+        `Entry: ${fmtP(entry.entryPrice)} → Now: ${fmtP(price)}\n` +
+        `P&L: <b>${pnl > 0 ? '+' : ''}${pnl}%</b>\n` +
+        `Score was: ${entry.score}/10 ${'⭐'.repeat(entry.conf)}\n\n` +
+        `🤖 Defi Insider Signal Bot`
+      );
+    }
+
+    // Resolve early if TP1 or SL hit before checkpoints
+    if (entry.finalResult === 'pending') {
+      const earlyResult = checkResult(entry, price);
+      if (earlyResult !== 'pending') {
+        entry.finalResult = earlyResult;
+        entry.resolvedAt = now;
+        changed = true;
+        const emoji = earlyResult === 'win' ? '✅' : '❌';
+        const hours = (elapsed / 3600000).toFixed(1);
+        console.log(`Early resolve ${entry.sym} ${entry.dir}: ${earlyResult} in ${hours}H`);
+
+        await sendTelegram(
+          `${emoji} <b>Signal ${earlyResult.toUpperCase()}</b> (${hours}H)\n\n` +
+          `<b>${entry.dir} ${entry.sym}/USDT</b>\n` +
+          `Entry: ${fmtP(entry.entryPrice)} → ${earlyResult === 'win' ? 'TP1' : 'SL'}: ${fmtP(earlyResult === 'win' ? entry.tp1 : entry.sl)}\n` +
+          `P&L: <b>${pnl > 0 ? '+' : ''}${pnl}%</b>\n\n` +
+          `🤖 Defi Insider Signal Bot`
+        );
+      }
+    }
+  }
+
+  if (changed) saveLog(signalLog);
+}
+
+function calcStats() {
+  const resolved = signalLog.filter(e => e.finalResult !== 'pending');
+  const wins     = resolved.filter(e => e.finalResult === 'win');
+  const losses   = resolved.filter(e => e.finalResult === 'loss');
+  const expired  = resolved.filter(e => e.finalResult === 'expired');
+  const total    = resolved.length;
+  const winRate  = total > 0 ? Math.round((wins.length / total) * 100) : null;
+
+  // Win rate by checkpoint
+  const r1H  = signalLog.filter(e => e.check1H);
+  const r4H  = signalLog.filter(e => e.check4H);
+  const r24H = signalLog.filter(e => e.check24H);
+  const wr1H  = r1H.length  > 0 ? Math.round(r1H.filter(e => e.check1H.result  === 'win').length / r1H.length  * 100) : null;
+  const wr4H  = r4H.length  > 0 ? Math.round(r4H.filter(e => e.check4H.result  === 'win').length / r4H.length  * 100) : null;
+  const wr24H = r24H.length > 0 ? Math.round(r24H.filter(e => e.check24H.result === 'win').length / r24H.length * 100) : null;
+
+  // By pair
+  const byPair = {};
+  PAIRS.forEach(p => {
+    const ps = resolved.filter(e => e.sym === p.sym);
+    byPair[p.sym] = {
+      total: ps.length,
+      wins:  ps.filter(e => e.finalResult === 'win').length,
+      wr:    ps.length > 0 ? Math.round(ps.filter(e => e.finalResult === 'win').length / ps.length * 100) : null
+    };
+  });
+
+  // By direction
+  const buyRes  = resolved.filter(e => e.dir === 'BUY');
+  const sellRes = resolved.filter(e => e.dir === 'SELL');
+  const buyWR   = buyRes.length  > 0 ? Math.round(buyRes.filter(e => e.finalResult  === 'win').length / buyRes.length  * 100) : null;
+  const sellWR  = sellRes.length > 0 ? Math.round(sellRes.filter(e => e.finalResult === 'win').length / sellRes.length * 100) : null;
+
+  // Avg pnl
+  const avgWinPnL  = wins.length   > 0 ? +(wins.reduce((s, e) => s + (e.check24H?.pnl || e.check4H?.pnl || e.check1H?.pnl || 0), 0) / wins.length).toFixed(2) : null;
+  const avgLossPnL = losses.length > 0 ? +(losses.reduce((s, e) => s + (e.check24H?.pnl || e.check4H?.pnl || e.check1H?.pnl || 0), 0) / losses.length).toFixed(2) : null;
+
+  // Best signal
+  const bestSig = wins.length > 0 ? wins.reduce((best, e) => {
+    const pnl = e.check24H?.pnl || e.check4H?.pnl || e.check1H?.pnl || 0;
+    const bpnl = best.check24H?.pnl || best.check4H?.pnl || best.check1H?.pnl || 0;
+    return pnl > bpnl ? e : best;
+  }, wins[0]) : null;
+
+  // Streak
+  let streak = 0, streakType = null;
+  for (let i = resolved.length - 1; i >= 0; i--) {
+    const r = resolved[i].finalResult;
+    if (r === 'expired') continue;
+    if (streakType === null) { streakType = r; streak = 1; }
+    else if (r === streakType) streak++;
+    else break;
+  }
+
+  return {
+    total, wins: wins.length, losses: losses.length, expired: expired.length,
+    winRate, wr1H, wr4H, wr24H,
+    byPair, buyWR, sellWR,
+    avgWinPnL, avgLossPnL,
+    bestSig, streak, streakType,
+    pending: signalLog.filter(e => e.finalResult === 'pending').length
+  };
+}
+
+// Daily summary at midnight UTC
+function scheduleDailySummary() {
+  const now = new Date();
+  const midnight = new Date(now);
+  midnight.setUTCHours(24, 0, 0, 0);
+  const msUntilMidnight = midnight - now;
+
+  setTimeout(async () => {
+    const stats = calcStats();
+    const today = signalLog.filter(e => {
+      const d = new Date(e.firedAt);
+      const n = new Date();
+      return d.getUTCDate() === n.getUTCDate() - 1;
+    });
+    const todayWins = today.filter(e => e.finalResult === 'win').length;
+    await sendTelegram(
+      `📊 <b>Daily Signal Summary</b>\n\n` +
+      `Signals today: <b>${today.length}</b>\n` +
+      `Wins: <b>${todayWins}</b> · Losses: <b>${today.length - todayWins}</b>\n\n` +
+      `Overall win rate: <b>${stats.winRate ?? '--'}%</b> (${stats.total} signals)\n` +
+      `Best timeframe: ${stats.wr4H !== null ? '4H ' + stats.wr4H + '%' : '--'}\n\n` +
+      `🤖 Defi Insider Signal Bot`
+    );
+    scheduleDailySummary(); // schedule next day
+  }, msUntilMidnight);
+}
+scheduleDailySummary();
+
+// ── DATA FETCHING ─────────────────────────────────────────
 const pairCache = {};
 
 async function fetchCC(sym) {
@@ -79,7 +317,6 @@ async function fetchCC(sym) {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
   if (json.Response !== 'Success') throw new Error(json.Message || 'CC error');
-  // Drop last candle (open/incomplete), filter zeroes
   return json.Data.Data
     .slice(0, -1)
     .map(c => ({ time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto||0 }))
@@ -105,24 +342,23 @@ async function fetchCG(sym) {
     .filter(c => c.close > 0);
 }
 
-function derive4H(candles1h) {
+function derive4H(c1h) {
   const out = [];
-  for (let i = 0; i + 3 < candles1h.length; i += 4) {
-    const g = candles1h.slice(i, i + 4);
+  for (let i = 0; i + 3 < c1h.length; i += 4) {
+    const g = c1h.slice(i, i + 4);
     out.push({
       time:   g[0].time,
       open:   g[0].open,
       high:   Math.max(...g.map(c => c.high)),
       low:    Math.min(...g.map(c => c.low)),
-      close:  g[g.length - 1].close,
-      volume: g.reduce((s, c) => s + c.volume, 0)
+      close:  g[g.length-1].close,
+      volume: g.reduce((s,c) => s+c.volume, 0)
     });
   }
   return out;
 }
 
 async function getCandles(sym) {
-  // Try CC first, then CG, then cache
   for (const [name, fn] of [['CC', () => fetchCC(sym)], ['CG', () => fetchCG(sym)]]) {
     try {
       const candles1h = await fn();
@@ -130,13 +366,11 @@ async function getCandles(sym) {
       pairCache[sym] = { candles1h, candles4h, ts: Date.now() };
       console.log(`✓ ${sym} (${name})`);
       return { candles1h, candles4h };
-    } catch (e) {
-      console.log(`✗ ${sym} ${name}: ${e.message}`);
-    }
+    } catch(e) { console.log(`✗ ${sym} ${name}: ${e.message}`); }
   }
   if (pairCache[sym]) {
     const age = Math.round((Date.now() - pairCache[sym].ts) / 60000);
-    console.log(`⚠ ${sym}: using cache (${age}m old)`);
+    console.log(`⚠ ${sym}: cache (${age}m)`);
     return pairCache[sym];
   }
   throw new Error(`${sym}: all sources failed`);
@@ -144,14 +378,14 @@ async function getCandles(sym) {
 
 // ── INDICATORS ────────────────────────────────────────────
 function calcRSI(closes, p = 14) {
-  if (closes.length < p + 1) return 50;
+  if (closes.length < p+1) return 50;
   let g = 0, l = 0;
-  for (let i = closes.length - p; i < closes.length; i++) {
+  for (let i = closes.length-p; i < closes.length; i++) {
     const d = closes[i] - closes[i-1];
     if (d > 0) g += d; else l += Math.abs(d);
   }
   const ag = g/p, al = l/p;
-  return al === 0 ? 100 : Math.round(100 - 100/(1 + ag/al));
+  return al === 0 ? 100 : Math.round(100 - 100/(1+ag/al));
 }
 
 function calcMACD(closes) {
@@ -168,12 +402,12 @@ function calcMACD(closes) {
 function calcBB(closes, p = 20) {
   if (closes.length < p) return { pos:'mid', pct:50, pctB:0.5 };
   const sl = closes.slice(-p);
-  const mid = sl.reduce((a,b) => a+b, 0) / p;
-  const std = Math.sqrt(sl.reduce((s,v) => s + Math.pow(v-mid,2), 0) / p);
-  const upper = mid + 2*std, lower = mid - 2*std;
+  const mid = sl.reduce((a,b) => a+b,0)/p;
+  const std = Math.sqrt(sl.reduce((s,v) => s+Math.pow(v-mid,2),0)/p);
+  const upper = mid+2*std, lower = mid-2*std;
   const last = closes[closes.length-1];
-  const range = upper - lower;
-  const pctB = range === 0 ? 0.5 : (last - lower) / range;
+  const range = upper-lower;
+  const pctB = range===0 ? 0.5 : (last-lower)/range;
   const pct = Math.max(0, Math.min(100, Math.round(pctB*100)));
   return { pos: pct>70?'upper':pct<30?'lower':'mid', pct, pctB };
 }
@@ -188,7 +422,7 @@ function calcATR(candles, p = 14) {
       Math.abs(candles[i].low  - candles[i-1].close)
     ));
   }
-  return trs.slice(-p).reduce((a,b) => a+b, 0) / p;
+  return trs.slice(-p).reduce((a,b)=>a+b,0)/p;
 }
 
 function calcEMA(closes, p) {
@@ -199,12 +433,12 @@ function calcEMA(closes, p) {
 
 function getTrend(closes, fast, slow) {
   if (closes.length < slow) return null;
-  return { trend: calcEMA(closes, fast) > calcEMA(closes, slow) ? 'bull' : 'bear' };
+  return { trend: calcEMA(closes,fast) > calcEMA(closes,slow) ? 'bull' : 'bear' };
 }
 
-// ── SIGNAL LOGIC — SEQUENTIAL HIERARCHY ──────────────────
+// ── SIGNAL LOGIC ──────────────────────────────────────────
 function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
-  // Step 1: 1H and 4H must agree — if not, no signal
+  // Step 1: Trend gate — 1H and 4H must agree
   if (trend1h && trend4h && trend1h.trend !== trend4h.trend) return [];
   const trendDir = trend4h?.trend || trend1h?.trend || null;
   if (!trendDir) return [];
@@ -213,11 +447,11 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
   if (trendDir === 'bull' && !macd.bull) return [];
   if (trendDir === 'bear' &&  macd.bull) return [];
 
-  // Step 3: BB sanity — ignore corrupted readings
+  // Step 3: BB sanity — reject corrupted readings
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
 
-  // Step 4: Score the setup quality
-  let score = 6.0; // baseline: trend + MACD confirmed
+  // Step 4: Score within confirmed trend
+  let score = 6.0;
 
   if (trendDir === 'bull') {
     if      (rsi < 30) score += 2.5;
@@ -240,7 +474,7 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
   }
 
   // Step 5: Volume
-  if      (volRatio > 0.05) score += 0.5;
+  if      (volRatio > 0.05)  score += 0.5;
   else if (volRatio < 0.005) score -= 1.0;
 
   score = Math.max(0, Math.min(10, +score.toFixed(1)));
@@ -275,43 +509,43 @@ async function processPair(pair) {
 
   const closes1h = candles1h.map(c => c.close);
   const closes4h = candles4h.map(c => c.close);
-  const price    = closes1h[closes1h.length - 1];
+  const price    = closes1h[closes1h.length-1];
 
-  const rsi     = calcRSI(closes1h, 14);
-  const macd    = calcMACD(closes1h);
-  const bb      = calcBB(closes1h, 20);
-  const atr     = calcATR(candles1h, 14);
+  const rsi    = calcRSI(closes1h, 14);
+  const macd   = calcMACD(closes1h);
+  const bb     = calcBB(closes1h, 20);
+  const atr    = calcATR(candles1h, 14);
   const trend1h = getTrend(closes1h, 9, 21);
   const trend4h = getTrend(closes4h, 20, 50);
 
   const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length-24] : closes1h[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
   const lastC  = candles1h[candles1h.length-1];
-  const vol    = lastC.volume || 0;
+  const vol    = (lastC.volume || 0) * price;
   const mcap   = pair.mcap || 0;
-  const volRatio = mcap > 0 ? (vol * price) / mcap : 0;
+  const volRatio = mcap > 0 ? vol / mcap : 0;
 
-  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price);
-  const topSig   = signals[0];
+  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price);
+  const topSig  = signals[0];
 
-  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} 1H=${trend1h?.trend||'?'} 4H=${trend4h?.trend||'?'} → ${topSig?topSig.dir+' '+topSig.score:'HOLD'}`);
+  console.log(`${pair.sym}: RSI=${rsi} 1H=${trend1h?.trend||'?'} 4H=${trend4h?.trend||'?'} MACD=${macd.bull?'B':'b'} → ${topSig ? topSig.dir+' '+topSig.score : 'HOLD'}`);
 
   return {
-    sym:pair.sym, price, pct24h, vol:vol*price, mcap, volRatio,
+    sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h,
-    score:   topSig?.score  || 5,
-    swing:   topSig?.swing  || 'HOLD',
-    scalp:   topSig?.scalp  || 'HOLD',
-    conf:    topSig?.conf   || 1,
-    aligned: topSig?.aligned || null,
-    trendNote: topSig?.trendNote || '',
+    score:    topSig?.score    || 5,
+    swing:    topSig?.swing    || 'HOLD',
+    scalp:    topSig?.scalp    || 'HOLD',
+    conf:     topSig?.conf     || 1,
+    aligned:  topSig?.aligned  || null,
+    trendNote:topSig?.trendNote || '',
     signals
   };
 }
 
-// ── SIGNAL HISTORY ────────────────────────────────────────
+// ── SIGNAL HISTORY (in-memory, 4H window) ────────────────
 let signalHistory = [];
-const HISTORY_TTL = 4 * 60 * 60 * 1000;
+const HISTORY_TTL = 4*60*60*1000;
 
 function addToHistory(results) {
   const now = Date.now();
@@ -323,7 +557,11 @@ function addToHistory(results) {
         h.sym === s.sym && h.dir === sig.dir && (now - h.ts) < 5*60*1000
       );
       if (!isDupe) {
-        if (sig.conf === 3) sendTelegram(formatTGSignal(s, sig));
+        // Log ★★★ to performance tracker + send Telegram
+        if (sig.conf === 3) {
+          addSignalToLog(s, sig);
+          sendTelegram(formatTGSignal(s, sig));
+        }
         signalHistory.push({
           sym:s.sym, price:s.price, dir:sig.dir, score:sig.score,
           conf:sig.conf, sl:sig.sl, tp1:sig.tp1, tp2:sig.tp2,
@@ -345,8 +583,7 @@ async function buildSignals() {
   const data = [];
   for (const pair of PAIRS) {
     try {
-      const result = await processPair(pair);
-      data.push(result);
+      data.push(await processPair(pair));
     } catch(e) {
       console.error(`${pair.sym}: ${e.message}`);
     }
@@ -355,6 +592,7 @@ async function buildSignals() {
   console.log(`Scan done: ${data.length}/${PAIRS.length}`);
   if (data.length === 0) throw new Error('All requests failed');
   addToHistory(data);
+  await updateSignalLog(data); // check performance checkpoints
   return data;
 }
 
@@ -363,16 +601,33 @@ app.get('/api/scan', async (req, res) => {
   try {
     const now = Date.now();
     if (cache.data && (now - cache.ts) < CACHE_TTL) {
-      return res.json({ ok:true, data:cache.data, history:signalHistory.slice().reverse(), cached:true, timestamp:new Date().toISOString() });
+      return res.json({
+        ok:true, data:cache.data,
+        history:signalHistory.slice().reverse(),
+        signalLog: signalLog.slice(-100).reverse(),
+        stats: calcStats(),
+        cached:true, timestamp:new Date().toISOString()
+      });
     }
     const data = await buildSignals();
     cache = { data, ts:Date.now() };
-    res.json({ ok:true, data, history:signalHistory.slice().reverse(), cached:false, timestamp:new Date().toISOString() });
+    res.json({
+      ok:true, data,
+      history:signalHistory.slice().reverse(),
+      signalLog: signalLog.slice(-100).reverse(),
+      stats: calcStats(),
+      cached:false, timestamp:new Date().toISOString()
+    });
   } catch(e) {
     console.error('Scan error:', e.message);
-    // Return cached data if available rather than error
     if (cache.data) {
-      return res.json({ ok:true, data:cache.data, history:signalHistory.slice().reverse(), cached:true, stale:true, timestamp:new Date().toISOString() });
+      return res.json({
+        ok:true, data:cache.data,
+        history:signalHistory.slice().reverse(),
+        signalLog: signalLog.slice(-100).reverse(),
+        stats: calcStats(),
+        cached:true, stale:true, timestamp:new Date().toISOString()
+      });
     }
     res.status(500).json({ ok:false, error:e.message });
   }
@@ -382,8 +637,8 @@ app.post('/api/trade-alert', async (req, res) => {
   const { sym, dir, entry, sl, tp1, tp2, score, conf, type } = req.body;
   const msgs = {
     entered: `📥 <b>TRADE ENTERED</b>\n\n${dir==='BUY'?'🟢':'🔴'} <b>${sym}/USDT ${dir}</b>\nScore: ${score}/10 ${'⭐'.repeat(conf)}\n\n📍 Entry: ${entry}\n🛑 Stop:  ${sl}\n🎯 TP1:   ${tp1}\n🎯 TP2:   ${tp2}\n\n🤖 Defi Insider Signal Bot`,
-    sl_hit:  `🚨 <b>STOP LOSS HIT</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry} → Stop: ${sl}\n\n🤖 Defi Insider Signal Bot`,
-    tp1_hit: `🎯 <b>TP1 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nTP1: ${tp1} hit ✅\nConsider moving stop to breakeven.\n\n🤖 Defi Insider Signal Bot`
+    sl_hit:  `🚨 <b>STOP LOSS HIT</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry} → SL: ${sl}\n\n🤖 Defi Insider Signal Bot`,
+    tp1_hit: `🎯 <b>TP1 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nTP1: ${tp1} ✅\nMove stop to breakeven.\n\n🤖 Defi Insider Signal Bot`
   };
   if (msgs[type]) await sendTelegram(msgs[type]);
   res.json({ ok:true });
@@ -393,10 +648,15 @@ app.get('/api/health', async (req, res) => {
   try {
     const candles = await fetchCC('BTC');
     const price = candles[candles.length-1]?.close;
-    res.json({ ok:true, source:'CryptoCompare', btcPrice:'$'+price?.toLocaleString(), pairs:PAIRS.map(p=>p.sym), cached:Object.keys(pairCache) });
-  } catch(e) {
-    res.json({ ok:false, error:e.message });
-  }
+    res.json({
+      ok:true, source:'CryptoCompare',
+      btcPrice:'$'+price?.toLocaleString(),
+      pairs:PAIRS.map(p=>p.sym),
+      cached:Object.keys(pairCache),
+      signalsTracked: signalLog.length,
+      stats: calcStats()
+    });
+  } catch(e) { res.json({ ok:false, error:e.message }); }
 });
 
 const PORT = process.env.PORT || 3000;
