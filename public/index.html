@@ -111,6 +111,7 @@ tr.rh td{border-left:2px solid #1a3a2a;}
 .fvg{color:#00ff88;}.fvr{color:#ff4466;}.fvy{color:#ffcc00;}.fvw{color:#c8d8e8;}
 .si-note{font-size:9px;padding:3px 6px;border-radius:3px;margin-bottom:4px;line-height:1.4;}
 .si-note.ok{background:#040f08;color:#00aa44;border-left:2px solid #00ff88;}
+.si-note.counter{background:#1a1400;color:#aa8800;border-left:2px solid #ffcc00;}
 .si-reason{font-size:9px;color:#1a5a3a;line-height:1.5;border-top:0.5px solid #0d2030;padding-top:4px;}
 .take-btn{margin-top:6px;width:100%;font-size:10px;padding:4px;border-radius:3px;border:0.5px solid #0d4a2a;background:#0a2a1a;color:#00ff88;cursor:pointer;text-transform:uppercase;font-weight:700;}
 .take-btn:hover{background:#0d3a20;}
@@ -488,19 +489,28 @@ function leverageFromScore(s,c){ if(c===3&&s>=9) return '3x-5x'; if(c===3&&s>=8.
 function reasoning(s, sig){
   const p=[];
   if(sig.dir==='BUY'){
-    if(s.rsi<38) p.push(`RSI ${s.rsi} oversold`);
-    if(s.macd&&s.macd.bull) p.push('MACD bullish');
-    if(s.bb&&s.bb.pctB<0.3) p.push(`BB lower band (${s.bb.pct}%)`);
-    if(s.trend1h&&s.trend1h.trend==='bull') p.push('1H uptrend');
-    if(s.trend4h&&s.trend4h.trend==='bull') p.push('4H uptrend');
+    p.push('MACD bullish ✓'); // mandatory gate
+    if(s.rsi<32) p.push(`RSI ${s.rsi} — deeply oversold`);
+    else if(s.rsi<40) p.push(`RSI ${s.rsi} — oversold`);
+    else if(s.rsi<48) p.push(`RSI ${s.rsi} — mild pullback`);
+    else if(s.rsi>68) p.push(`RSI ${s.rsi} — overbought (risk)`);
+    if(s.bb&&s.bb.pctB<0.20) p.push(`BB ${s.bb.pct}% — lower band entry`);
+    else if(s.bb&&s.bb.pctB<0.35) p.push(`BB ${s.bb.pct}% — below midline`);
+    else if(s.bb&&s.bb.pctB>0.80) p.push(`BB ${s.bb.pct}% — upper band (caution)`);
+    if(s.trend4h&&s.trend4h.trend==='bull') p.push('4H trend aligned');
+    else if(s.trend4h&&s.trend4h.trend==='bear') p.push('4H counter-trend — reduce size');
   } else {
-    if(s.rsi>62) p.push(`RSI ${s.rsi} overbought`);
-    if(s.macd&&!s.macd.bull) p.push('MACD bearish');
-    if(s.bb&&s.bb.pctB>0.7) p.push(`BB upper band (${s.bb.pct}%)`);
-    if(s.trend1h&&s.trend1h.trend==='bear') p.push('1H downtrend');
-    if(s.trend4h&&s.trend4h.trend==='bear') p.push('4H downtrend');
+    p.push('MACD bearish ✓'); // mandatory gate
+    if(s.rsi>68) p.push(`RSI ${s.rsi} — deeply overbought`);
+    else if(s.rsi>60) p.push(`RSI ${s.rsi} — overbought`);
+    else if(s.rsi>52) p.push(`RSI ${s.rsi} — mildly extended`);
+    else if(s.rsi<32) p.push(`RSI ${s.rsi} — oversold (bounce risk)`);
+    if(s.bb&&s.bb.pctB>0.80) p.push(`BB ${s.bb.pct}% — upper band short`);
+    else if(s.bb&&s.bb.pctB>0.65) p.push(`BB ${s.bb.pct}% — above midline`);
+    else if(s.bb&&s.bb.pctB<0.20) p.push(`BB ${s.bb.pct}% — lower band (bounce risk)`);
+    if(s.trend4h&&s.trend4h.trend==='bear') p.push('4H trend aligned');
+    else if(s.trend4h&&s.trend4h.trend==='bull') p.push('4H counter-trend — reduce size');
   }
-  if(!p.length) p.push('Trend + MACD confluence');
   return p.join(' · ');
 }
 
@@ -615,24 +625,24 @@ function renderSigCard(sig, s, showTakeBtn=true){
       <div class="si-meta">
         <span class="si-cv ${scCls==='h'?'cv':'yv'}">${'★'.repeat(sig.conf)}${'☆'.repeat(3-sig.conf)} ${isHC?'High Conviction':'Moderate'}</span>
         <div class="si-pills">
-          <span class="si-pill al">✓ Aligned</span>
+          <span class="si-pill ${sig.aligned?'al':''}">${sig.aligned?'✓ 4H Aligned':'↯ 4H Counter'}</span>
           <span class="si-pill">${lev}</span>
-          <span class="si-pill">1H+4H</span>
+          <span class="si-pill">MACD ${s.macd&&s.macd.bull?'BULL':'BEAR'}</span>
         </div>
       </div>
     </div>
     <div class="si-fields">
       <div class="sf"><span class="sf-l">Entry</span><span class="sf-v fvw">${fPrice(s.price)}</span></div>
       <div class="sf"><span class="sf-l">Stop Loss</span><span class="sf-v fvr">${fPrice(sig.sl)}</span></div>
-      <div class="sf"><span class="sf-l">TP1</span><span class="sf-v fvg">${fPrice(sig.tp1)}</span></div>
-      <div class="sf"><span class="sf-l">TP2</span><span class="sf-v fvg">${fPrice(sig.tp2)}</span></div>
+      <div class="sf"><span class="sf-l">TP1 (2:1 RR)</span><span class="sf-v fvg">${fPrice(sig.tp1)}</span></div>
+      <div class="sf"><span class="sf-l">TP2 (3.3:1 RR)</span><span class="sf-v fvg">${fPrice(sig.tp2)}</span></div>
       <div class="sf"><span class="sf-l">Leverage</span><span class="sf-v fvy">${lev}</span></div>
       <div class="sf"><span class="sf-l">ATR(14)</span><span class="sf-v fvw">${fPrice(s.atr)}</span></div>
       <div class="sf"><span class="sf-l">RSI</span><span class="sf-v ${s.rsi<38?'fvg':s.rsi>62?'fvr':'fvw'}">${s.rsi}</span></div>
       <div class="sf"><span class="sf-l">BB%</span><span class="sf-v fvw">${s.bb?s.bb.pct+'%':'--'}</span></div>
     </div>
     <div class="sf" style="padding:2px 0 5px;border-bottom:0.5px solid #080e14;"><span class="sf-l">Invalidation</span><span class="sf-v" style="color:#1a5a3a;font-size:9px;">${sig.dir==='BUY'?'Close below '+fPrice(sig.sl):'Close above '+fPrice(sig.sl)}</span></div>
-    ${sig.trendNote?`<div class="si-note ok">${sig.trendNote}</div>`:''}
+    ${sig.trendNote?`<div class="si-note ${sig.aligned?'ok':'counter'}">${sig.trendNote}</div>`:''}
     <div class="si-reason">${reason}</div>
     ${showTakeBtn?`<button class="take-btn ${taken?'taken':''}" id="tbtn-${s.sym}-${sig.dir}" onclick="takeTrade('${s.sym}','${sig.dir}',${s.price},${sig.sl},${sig.tp1},${sig.tp2},${sig.score},${sig.conf})">${taken?'✅ Trade Logged':'📥 I Took This Trade'}</button>`:''}
   </div>`;
