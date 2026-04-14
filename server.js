@@ -1,450 +1,358 @@
 const express = require('express');
 const cors = require('cors');
 const app = express();
-
 app.use(cors());
+app.use(express.json());
 app.use(express.static('public'));
 
-// ── TELEGRAM NOTIFICATIONS ────────────────────────────────
+// ── PAIRS ─────────────────────────────────────────────────
+const PAIRS = [
+  { sym:'BTC',  cc:'BTC',  mcap:1.32e12 },
+  { sym:'ETH',  cc:'ETH',  mcap:382e9 },
+  { sym:'BNB',  cc:'BNB',  mcap:61e9 },
+  { sym:'SOL',  cc:'SOL',  mcap:77e9 },
+  { sym:'DOGE', cc:'DOGE', mcap:23e9 },
+  { sym:'AVAX', cc:'AVAX', mcap:14e9 },
+  { sym:'LINK', cc:'LINK', mcap:8.5e9 },
+  { sym:'NEAR', cc:'NEAR', mcap:6.8e9 },
+  { sym:'UNI',  cc:'UNI',  mcap:5.9e9 },
+  { sym:'INJ',  cc:'INJ',  mcap:2.4e9 },
+  { sym:'SUI',  cc:'SUI',  mcap:2.1e9 },
+  { sym:'TAO',  cc:'TAO',  mcap:1.8e9 }
+];
+
+// ── TELEGRAM ──────────────────────────────────────────────
 const TG_TOKEN   = process.env.TG_TOKEN   || '8657562447:AAGGn9GzBf8mHyP44ZAukdM702ls_NlboDI';
 const TG_CHAT_ID = process.env.TG_CHAT_ID || '5337031418';
 
-async function sendTelegram(message) {
+async function sendTelegram(text) {
   try {
     const { default: fetch } = await import('node-fetch');
-    const url = `https://api.telegram.org/bot${TG_TOKEN}/sendMessage`;
-    await fetch(url, {
+    await fetch(`https://api.telegram.org/bot${TG_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: TG_CHAT_ID,
-        text: message,
-        parse_mode: 'HTML'
-      })
+      body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: 'HTML' })
     });
-    console.log('Telegram notification sent');
-  } catch (e) {
-    console.error('Telegram error:', e.message);
-  }
+  } catch (e) { console.error('TG error:', e.message); }
 }
 
-function formatTelegramSignal(s, sig) {
-  const dir     = sig.dir === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-  const stars   = '⭐'.repeat(sig.conf);
-  const aligned = sig.aligned ? '✅ Trend Aligned' : '⚠️ Counter-Trend';
-  const lev     = leverageFromScore(sig.score, sig.conf);
-
-  return `${dir} <b>${s.sym}/USDT</b>
-${stars} ${sig.conf === 3 ? 'High Conviction' : 'Moderate'} — Score <b>${sig.score}/10</b>
-
-📍 Entry:    <b>${fmtPrice(s.price)}</b>
-🛑 Stop:     <b>${fmtPrice(sig.sl)}</b>
-🎯 TP1:      <b>${fmtPrice(sig.tp1)}</b>
-🎯 TP2:      <b>${fmtPrice(sig.tp2)}</b>
-⚡ Leverage: <b>${lev}</b>
-📊 ATR(14):  <b>${fmtPrice(s.atr)}</b>
-
-${aligned}
-<i>${sig.trendNote || ''}</i>
-
-🤖 Defi Insider Signal Bot`;
-}
-
-function fmtPrice(p) {
-  if (!p && p !== 0) return '--';
-  if (p >= 10000) return '$' + p.toLocaleString('en', { maximumFractionDigits: 0 });
-  if (p >= 1000)  return '$' + p.toLocaleString('en', { maximumFractionDigits: 1 });
+function fmtP(p) {
+  if (!p) return '--';
+  if (p >= 10000) return '$' + Math.round(p).toLocaleString();
   if (p >= 1)     return '$' + p.toFixed(2);
   if (p >= 0.01)  return '$' + p.toFixed(4);
   return '$' + p.toFixed(6);
 }
 
 function leverageFromScore(score, conf) {
-  if (conf === 3 && score >= 9)   return '3x–5x';
-  if (conf === 3 && score >= 8.5) return '2x–3x';
-  if (conf === 2 && score >= 7)   return '1x–2x';
+  if (conf === 3 && score >= 9)   return '3x-5x';
+  if (conf === 3 && score >= 8.5) return '2x-3x';
+  if (conf === 2 && score >= 7)   return '1x-2x';
   return '1x spot';
 }
 
-// ── 12 PAIRS — hardcoded, real klines, no rate limit risk ──
-const PAIRS = [
-  { sym: 'BTC',  cc: 'BTC',  mcap: 1.32e12 },
-  { sym: 'ETH',  cc: 'ETH',  mcap: 382e9   },
-  { sym: 'BNB',  cc: 'BNB',  mcap: 61e9    },
-  { sym: 'SOL',  cc: 'SOL',  mcap: 77e9    },
-  { sym: 'DOGE', cc: 'DOGE', mcap: 23e9    },
-  { sym: 'AVAX', cc: 'AVAX', mcap: 14e9    },
-  { sym: 'LINK', cc: 'LINK', mcap: 8.5e9   },
-  { sym: 'NEAR', cc: 'NEAR', mcap: 6.8e9   },
-  { sym: 'UNI',  cc: 'UNI',  mcap: 5.9e9   },
-  { sym: 'INJ',  cc: 'INJ',  mcap: 2.4e9   },
-  { sym: 'SUI',  cc: 'SUI',  mcap: 2.1e9   },
-  { sym: 'TAO',  cc: 'TAO',  mcap: 1.8e9   }
-];
+function formatTGSignal(s, sig) {
+  const e = sig.dir === 'BUY' ? '🟢' : '🔴';
+  return `${e} <b>${sig.dir} ${s.sym}/USDT</b>
+${'⭐'.repeat(sig.conf)} Score: <b>${sig.score}/10</b>
+
+📍 Entry:    <b>${fmtP(s.price)}</b>
+🛑 Stop:     <b>${fmtP(sig.sl)}</b>
+🎯 TP1:      <b>${fmtP(sig.tp1)}</b>
+🎯 TP2:      <b>${fmtP(sig.tp2)}</b>
+⚡ Leverage: <b>${leverageFromScore(sig.score, sig.conf)}</b>
+
+${sig.trendNote}
+🤖 Defi Insider Signal Bot`;
+}
+
+// ── DATA FETCHING ─────────────────────────────────────────
+// One CryptoCompare call per pair, 4H derived from 1H grouping
+// Per-pair cache so failed fetches use last good data
+
+const pairCache = {};
+
+async function fetchCC(sym) {
+  const { default: fetch } = await import('node-fetch');
+  const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=200`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.Response !== 'Success') throw new Error(json.Message || 'CC error');
+  // Drop last candle (open/incomplete), filter zeroes
+  return json.Data.Data
+    .slice(0, -1)
+    .map(c => ({ time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto||0 }))
+    .filter(c => c.close > 0);
+}
+
+async function fetchCG(sym) {
+  const IDS = {
+    BTC:'bitcoin', ETH:'ethereum', BNB:'binancecoin', SOL:'solana',
+    DOGE:'dogecoin', AVAX:'avalanche-2', LINK:'chainlink', NEAR:'near',
+    UNI:'uniswap', INJ:'injective-protocol', SUI:'sui', TAO:'bittensor'
+  };
+  const id = IDS[sym];
+  if (!id) throw new Error('No CG id for ' + sym);
+  const { default: fetch } = await import('node-fetch');
+  const url = `https://api.coingecko.com/api/v3/coins/${id}/ohlc?vs_currency=usd&days=7`;
+  const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (!res.ok) throw new Error(`CG HTTP ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data) || data.length < 10) throw new Error('CG insufficient data');
+  return data
+    .map(c => ({ time:Math.floor(c[0]/1000), open:c[1], high:c[2], low:c[3], close:c[4], volume:0 }))
+    .filter(c => c.close > 0);
+}
+
+function derive4H(candles1h) {
+  const out = [];
+  for (let i = 0; i + 3 < candles1h.length; i += 4) {
+    const g = candles1h.slice(i, i + 4);
+    out.push({
+      time:   g[0].time,
+      open:   g[0].open,
+      high:   Math.max(...g.map(c => c.high)),
+      low:    Math.min(...g.map(c => c.low)),
+      close:  g[g.length - 1].close,
+      volume: g.reduce((s, c) => s + c.volume, 0)
+    });
+  }
+  return out;
+}
+
+async function getCandles(sym) {
+  // Try CC first, then CG, then cache
+  for (const [name, fn] of [['CC', () => fetchCC(sym)], ['CG', () => fetchCG(sym)]]) {
+    try {
+      const candles1h = await fn();
+      const candles4h = derive4H(candles1h);
+      pairCache[sym] = { candles1h, candles4h, ts: Date.now() };
+      console.log(`✓ ${sym} (${name})`);
+      return { candles1h, candles4h };
+    } catch (e) {
+      console.log(`✗ ${sym} ${name}: ${e.message}`);
+    }
+  }
+  if (pairCache[sym]) {
+    const age = Math.round((Date.now() - pairCache[sym].ts) / 60000);
+    console.log(`⚠ ${sym}: using cache (${age}m old)`);
+    return pairCache[sym];
+  }
+  throw new Error(`${sym}: all sources failed`);
+}
 
 // ── INDICATORS ────────────────────────────────────────────
-function calcRSI(closes, period = 14) {
-  if (closes.length < period + 1) return 50;
-  let gains = 0, losses = 0;
-  for (let i = closes.length - period; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
-    if (d > 0) gains += d; else losses += Math.abs(d);
+function calcRSI(closes, p = 14) {
+  if (closes.length < p + 1) return 50;
+  let g = 0, l = 0;
+  for (let i = closes.length - p; i < closes.length; i++) {
+    const d = closes[i] - closes[i-1];
+    if (d > 0) g += d; else l += Math.abs(d);
   }
-  const avgG = gains / period, avgL = losses / period;
-  if (avgL === 0) return 100;
-  return Math.round(100 - (100 / (1 + avgG / avgL)));
+  const ag = g/p, al = l/p;
+  return al === 0 ? 100 : Math.round(100 - 100/(1 + ag/al));
 }
 
 function calcMACD(closes) {
   function ema(arr, p) {
-    const k = 2 / (p + 1); let e = arr[0];
-    for (let i = 1; i < arr.length; i++) e = arr[i] * k + e * (1 - k);
+    const k = 2/(p+1); let e = arr[0];
+    for (let i = 1; i < arr.length; i++) e = arr[i]*k + e*(1-k);
     return e;
   }
-  if (closes.length < 26) return { hist: 0, bull: false };
-  const hist = ema(closes.slice(-12), 12) - ema(closes.slice(-26), 26);
+  if (closes.length < 26) return { hist:0, bull:false };
+  const hist = ema(closes.slice(-26), 12) - ema(closes.slice(-26), 26);
   return { hist, bull: hist > 0 };
 }
 
-function calcBB(closes, period = 20) {
-  if (closes.length < period) return { pos: 'mid', pct: 50, pctB: 0.5 };
-  const slice = closes.slice(-period);
-  const mid = slice.reduce((a, b) => a + b, 0) / period;
-  const std = Math.sqrt(slice.reduce((s, v) => s + Math.pow(v - mid, 2), 0) / period);
-  const upper = mid + 2 * std, lower = mid - 2 * std;
-  const last = closes[closes.length - 1];
+function calcBB(closes, p = 20) {
+  if (closes.length < p) return { pos:'mid', pct:50, pctB:0.5 };
+  const sl = closes.slice(-p);
+  const mid = sl.reduce((a,b) => a+b, 0) / p;
+  const std = Math.sqrt(sl.reduce((s,v) => s + Math.pow(v-mid,2), 0) / p);
+  const upper = mid + 2*std, lower = mid - 2*std;
+  const last = closes[closes.length-1];
   const range = upper - lower;
   const pctB = range === 0 ? 0.5 : (last - lower) / range;
-  const pct = Math.max(0, Math.min(100, Math.round(pctB * 100)));
-  return { pos: pct > 70 ? 'upper' : pct < 30 ? 'lower' : 'mid', pct, pctB, upper, lower, mid };
+  const pct = Math.max(0, Math.min(100, Math.round(pctB*100)));
+  return { pos: pct>70?'upper':pct<30?'lower':'mid', pct, pctB };
 }
 
-function calcATR(candles, period = 14) {
-  if (candles.length < period + 1) return candles[candles.length - 1].close * 0.02;
+function calcATR(candles, p = 14) {
+  if (candles.length < p+1) return candles[candles.length-1].close * 0.02;
   const trs = [];
   for (let i = 1; i < candles.length; i++) {
-    const tr = Math.max(
+    trs.push(Math.max(
       candles[i].high - candles[i].low,
-      Math.abs(candles[i].high - candles[i - 1].close),
-      Math.abs(candles[i].low  - candles[i - 1].close)
-    );
-    trs.push(tr);
+      Math.abs(candles[i].high - candles[i-1].close),
+      Math.abs(candles[i].low  - candles[i-1].close)
+    ));
   }
-  return trs.slice(-period).reduce((a, b) => a + b, 0) / period;
+  return trs.slice(-p).reduce((a,b) => a+b, 0) / p;
 }
 
-function calcEMA(closes, period) {
-  if (closes.length < period) return closes[closes.length - 1];
-  const k = 2 / (period + 1);
-  let e = closes[0];
-  for (let i = 1; i < closes.length; i++) e = closes[i] * k + e * (1 - k);
+function calcEMA(closes, p) {
+  const k = 2/(p+1); let e = closes[0];
+  for (let i = 1; i < closes.length; i++) e = closes[i]*k + e*(1-k);
   return e;
 }
 
-// ── 4H TREND CONTEXT ──────────────────────────────────────
-function get4HTrend(closes4h) {
-  if (!closes4h || closes4h.length < 50) return null;
-  const ema20 = calcEMA(closes4h, 20);
-  const ema50 = calcEMA(closes4h, 50);
-  const price = closes4h[closes4h.length - 1];
-  return {
-    trend:        ema20 > ema50 ? 'bull' : 'bear',
-    priceVsEMA20: price > ema20 ? 'above' : 'below',
-    ema20:        +ema20.toFixed(4),
-    ema50:        +ema50.toFixed(4)
-  };
+function getTrend(closes, fast, slow) {
+  if (closes.length < slow) return null;
+  return { trend: calcEMA(closes, fast) > calcEMA(closes, slow) ? 'bull' : 'bear' };
 }
 
-// ── 1H TREND (informational only — not used for filtering) ─
-function get1HTrend(closes1h) {
-  if (!closes1h || closes1h.length < 21) return null;
-  const ema9  = calcEMA(closes1h, 9);
-  const ema21 = calcEMA(closes1h, 21);
-  const price = closes1h[closes1h.length - 1];
-  return {
-    trend:        ema9 > ema21 ? 'bull' : 'bear',
-    priceVsEMA9:  price > ema9 ? 'above' : 'below',
-    ema9:         +ema9.toFixed(4),
-    ema21:        +ema21.toFixed(4)
-  };
-}
+// ── SIGNAL LOGIC — SEQUENTIAL HIERARCHY ──────────────────
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
+  // Step 1: 1H and 4H must agree — if not, no signal
+  if (trend1h && trend4h && trend1h.trend !== trend4h.trend) return [];
+  const trendDir = trend4h?.trend || trend1h?.trend || null;
+  if (!trendDir) return [];
 
+  // Step 2: MACD must align with trend
+  if (trendDir === 'bull' && !macd.bull) return [];
+  if (trendDir === 'bear' &&  macd.bull) return [];
 
-// ── SIGNAL DECISION ───────────────────────────────────────
-// Active thresholds: score >= 6 = signal fires
-// ★★★ = score >= 7.5 + 4H aligned
-// ★★  = score >= 6 (including counter-trend)
+  // Step 3: BB sanity — ignore corrupted readings
+  const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
 
-// ── STAR RATING — single source of truth ─────────────────
-// Stars come directly from score + alignment. Nothing else.
-// 8.5+ AND aligned = ★★★ (high conviction, trend confirmed)
-// 8.5+ but counter = ★★ (strong setup, against 4H — use caution)
-// 6.0–8.4           = ★★ (valid signal, moderate conviction)
-// Below 6           = no signal
+  // Step 4: Score the setup quality
+  let score = 6.0; // baseline: trend + MACD confirmed
 
-function getStars(score, aligned) {
-  if (score >= 8.5 && aligned) return 3;
-  if (score >= 6.0) return 2;
-  return 1;
-}
-
-function getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, atr, price) {
-  const bullScore = scoreDirection(rsi, macd, bb, pct24h, volRatio, trend4h, 'bull');
-  const bearScore = scoreDirection(rsi, macd, bb, pct24h, volRatio, trend4h, 'bear');
-
-  const results = [];
-
-  // BUY signal
-  if (bullScore >= 6) {
-    const aligned = !trend4h || trend4h.trend === 'bull';
-    const conf = getStars(bullScore, aligned);
-    const trendNote = aligned
-      ? (trend4h ? `Trend-confirmed — 4H is BULL.` : '')
-      : `Counter-trend — 4H is BEAR. Score ${bullScore}/10 but capped at ★★.`;
-    results.push({
-      dir: 'BUY', score: bullScore, conf,
-      swing: bullScore >= 6.5 ? 'BUY' : 'WATCH',
-      scalp: 'BUY',
-      sl:  +(price - atr * 1.5).toFixed(4),
-      tp1: +(price + atr * 2.0).toFixed(4),
-      tp2: +(price + atr * 3.5).toFixed(4),
-      aligned, trendNote
-    });
+  if (trendDir === 'bull') {
+    if      (rsi < 30) score += 2.5;
+    else if (rsi < 38) score += 1.5;
+    else if (rsi < 45) score += 0.5;
+    else if (rsi > 65) score -= 1.5;
+    else if (rsi > 55) score -= 0.5;
+    if      (bbB < 0.20) score += 1.5;
+    else if (bbB < 0.35) score += 0.5;
+    else if (bbB > 0.80) score -= 1.0;
+  } else {
+    if      (rsi > 70) score += 2.5;
+    else if (rsi > 62) score += 1.5;
+    else if (rsi > 55) score += 0.5;
+    else if (rsi < 35) score -= 1.5;
+    else if (rsi < 45) score -= 0.5;
+    if      (bbB > 0.80) score += 1.5;
+    else if (bbB > 0.65) score += 0.5;
+    else if (bbB < 0.20) score -= 1.0;
   }
 
-  // SELL signal
-  if (bearScore >= 6) {
-    const aligned = !trend4h || trend4h.trend === 'bear';
-    const conf = getStars(bearScore, aligned);
-    const trendNote = aligned
-      ? (trend4h ? `Trend-confirmed — 4H is BEAR.` : '')
-      : `Counter-trend — 4H is BULL. Score ${bearScore}/10 but capped at ★★.`;
-    results.push({
-      dir: 'SELL', score: bearScore, conf,
-      swing: bearScore >= 6.5 ? 'SELL' : 'WATCH',
-      scalp: 'SELL',
-      sl:  +(price + atr * 1.5).toFixed(4),
-      tp1: +(price - atr * 2.0).toFixed(4),
-      tp2: +(price - atr * 3.5).toFixed(4),
-      aligned, trendNote
-    });
+  // Step 5: Volume
+  if      (volRatio > 0.05) score += 0.5;
+  else if (volRatio < 0.005) score -= 1.0;
+
+  score = Math.max(0, Math.min(10, +score.toFixed(1)));
+  const conf = score >= 8.5 ? 3 : score >= 6.5 ? 2 : 1;
+  const trendNote = `1H: ${trend1h?.trend?.toUpperCase()||'?'} · 4H: ${trend4h?.trend?.toUpperCase()||'?'} · MACD: ${macd.bull?'BULL':'BEAR'}`;
+
+  if (trendDir === 'bull') {
+    return [{
+      dir:'BUY', score, conf, aligned:true, trendNote,
+      swing: score >= 7.0 ? 'BUY' : 'WATCH',
+      scalp: score >= 6.5 ? 'BUY' : 'WATCH',
+      sl:  +(price - atr*1.5).toFixed(4),
+      tp1: +(price + atr*2.0).toFixed(4),
+      tp2: +(price + atr*3.5).toFixed(4)
+    }];
+  } else {
+    return [{
+      dir:'SELL', score, conf, aligned:true, trendNote,
+      swing: score >= 7.0 ? 'SELL' : 'WATCH',
+      scalp: score >= 6.5 ? 'SELL' : 'WATCH',
+      sl:  +(price + atr*1.5).toFixed(4),
+      tp1: +(price - atr*2.0).toFixed(4),
+      tp2: +(price - atr*3.5).toFixed(4)
+    }];
   }
-
-  return results;
 }
 
-// ── CRYPTOCOMPARE FETCH ───────────────────────────────────
-// ── KRAKEN API FETCH — no rate limits, no key needed ─────
-// Kraken pair format: XBTUSD for BTC, ETHUSD for ETH, etc.
-// Kraken pair names verified against Kraken's asset list
-// BNB and TAO are not listed on Kraken — using CryptoCompare fallback for those
-const KRAKEN_MAP = {
-  BTC:  'XBTUSD',
-  ETH:  'ETHUSD',
-  SOL:  'SOLUSD',
-  DOGE: 'XDGUSD',
-  AVAX: 'AVAXUSD',
-  LINK: 'LINKUSD',
-  NEAR: 'NEARUSD',
-  UNI:  'UNIUSD',
-  INJ:  'INJUSD',
-  SUI:  'SUIUSD',
-  // BNB and TAO not on Kraken — fetched via CryptoCompare
-};
-
-// CryptoCompare fallback for pairs not on Kraken
-async function ccFetchFallback(sym) {
-  const { default: fetch } = await import('node-fetch');
-  const [r1h, r4h] = await Promise.all([
-    fetch(`https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100`),
-    fetch(`https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100&aggregate=4`)
-  ]);
-  const [d1h, d4h] = await Promise.all([r1h.json(), r4h.json()]);
-  if (d1h.Response !== 'Success') throw new Error(`CC fallback failed for ${sym}`);
-  const map = arr => arr.slice(0,-1).map(c => ({
-    time: c.time, open: c.open, high: c.high,
-    low: c.low, close: c.close, volume: c.volumeto / (c.close||1)
-  }));
-  return {
-    candles1h: map(d1h.Data.Data),
-    candles4h: d4h.Response === 'Success' ? map(d4h.Data.Data) : []
-  };
-}
-
-// Pairs not available on Kraken — fetched from CryptoCompare as fallback
-const CC_FALLBACK = new Set(['BNB', 'TAO']);
-
-async function ccFetch(path) {
-  const { default: fetch } = await import('node-fetch');
-  const res = await fetch('https://min-api.cryptocompare.com' + path, {
-    headers: { 'Accept': 'application/json' }
-  });
-  if (!res.ok) throw new Error('CC ' + res.status);
-  return res.json();
-}
-
-async function fetchCandles(sym, interval1h, interval4h) {
-  // For pairs not on Kraken, fall back to CryptoCompare
-  if (CC_FALLBACK.has(sym)) {
-    const agg = interval4h === 240 ? 4 : 1;
-    const [d1h, d4h] = await Promise.all([
-      ccFetch(`/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100`),
-      ccFetch(`/data/v2/histohour?fsym=${sym}&tsym=USD&limit=100&aggregate=4`)
-    ]);
-    const c1h = d1h.Response === 'Success' ? d1h.Data.Data.slice(0,-1).map(c=>({
-      time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto/c.close||0
-    })) : [];
-    const c4h = d4h.Response === 'Success' ? d4h.Data.Data.slice(0,-1).map(c=>({
-      time:c.time, open:c.open, high:c.high, low:c.low, close:c.close, volume:c.volumeto/c.close||0
-    })) : [];
-    return [c1h, c4h];
-  }
-  // Use Kraken for all other pairs
-  const krakenPair = KRAKEN_MAP[sym];
-  if (!krakenPair) throw new Error(`No mapping for ${sym}`);
-  const [c1h, c4h] = await Promise.all([
-    krakenFetch(krakenPair, 60, 100),
-    krakenFetch(krakenPair, 240, 100)
-  ]);
-  return [c1h, c4h];
-}
-
-
-
-async function processPairData(pair, candles1h, candles4h) {
+// ── PROCESS PAIR ──────────────────────────────────────────
+async function processPair(pair) {
+  const { candles1h, candles4h } = await getCandles(pair.sym);
   if (candles1h.length < 26) throw new Error('Insufficient candles');
 
-  // Kraken already drops the open candle in krakenFetch — candles are clean
   const closes1h = candles1h.map(c => c.close);
   const closes4h = candles4h.map(c => c.close);
-  const price    = closes1h[closes1h.length - 1]; // last confirmed close
+  const price    = closes1h[closes1h.length - 1];
 
   const rsi     = calcRSI(closes1h, 14);
   const macd    = calcMACD(closes1h);
   const bb      = calcBB(closes1h, 20);
   const atr     = calcATR(candles1h, 14);
-  const trend4h = get4HTrend(closes4h);
-  const trend1h = get1HTrend(closes1h);
+  const trend1h = getTrend(closes1h, 9, 21);
+  const trend4h = getTrend(closes4h, 20, 50);
 
-  const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length - 24] : closes1h[0];
+  const price24hAgo = closes1h.length >= 24 ? closes1h[closes1h.length-24] : closes1h[0];
   const pct24h = ((price - price24hAgo) / price24hAgo) * 100;
+  const lastC  = candles1h[candles1h.length-1];
+  const vol    = lastC.volume || 0;
+  const mcap   = pair.mcap || 0;
+  const volRatio = mcap > 0 ? (vol * price) / mcap : 0;
 
-  const lastCandle = candles1h[candles1h.length - 1];
-  const vol      = (lastCandle.volume || 0) * price; // convert to USD volume
-  const mcap     = pair.mcap || 0;
-  const volRatio = mcap > 0 ? vol / mcap : 0;
+  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price);
+  const topSig   = signals[0];
 
-  const signals = getSignals(rsi, macd, bb, pct24h, volRatio, trend4h, trend1h, atr, price);
-  const topSignal = [...signals].sort((a, b) => b.score - a.score)[0];
-
-  console.log(
-    `${pair.sym}: RSI=${rsi} MACD=${macd.bull?'BULL':'BEAR'} BB=${bb.pct}% ` +
-    `1H=${trend1h?trend1h.trend:'?'} 4H=${trend4h?trend4h.trend:'?'} ` +
-    `→ ${topSignal?topSignal.dir+' '+topSignal.score:'NO SIGNAL'}`
-  );
+  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} 1H=${trend1h?.trend||'?'} 4H=${trend4h?.trend||'?'} → ${topSig?topSig.dir+' '+topSig.score:'HOLD'}`);
 
   return {
-    sym:      pair.sym,
-    price,    pct24h, vol, mcap, volRatio,
-    rsi,      macd,   bb,  atr,  trend4h, trend1h,
-    score:    topSignal ? topSignal.score : 5,
-    swing:    topSignal ? topSignal.swing : 'HOLD',
-    scalp:    topSignal ? topSignal.scalp : 'HOLD',
-    conf:     topSignal ? topSignal.conf  : 1,
-    aligned:  topSignal ? topSignal.aligned   : null,
-    trendNote:topSignal ? topSignal.trendNote : '',
+    sym:pair.sym, price, pct24h, vol:vol*price, mcap, volRatio,
+    rsi, macd, bb, atr, trend1h, trend4h,
+    score:   topSig?.score  || 5,
+    swing:   topSig?.swing  || 'HOLD',
+    scalp:   topSig?.scalp  || 'HOLD',
+    conf:    topSig?.conf   || 1,
+    aligned: topSig?.aligned || null,
+    trendNote: topSig?.trendNote || '',
     signals
   };
 }
 
-// ── CACHE ─────────────────────────────────────────────────
-let cache = { data: null, ts: 0 };
-const CACHE_TTL = 60 * 1000;
+// ── SIGNAL HISTORY ────────────────────────────────────────
+let signalHistory = [];
+const HISTORY_TTL = 4 * 60 * 60 * 1000;
 
-// ── SIGNAL HISTORY (last 4 hours) ────────────────────────
-let signalHistory = []; // { sym, dir, score, conf, sl, tp1, tp2, trendNote, aligned, price, ts }
-const HISTORY_TTL = 4 * 60 * 60 * 1000; // 4 hours
-
-function addToHistory(pairResults) {
+function addToHistory(results) {
   const now = Date.now();
-  // Remove signals older than 4 hours
   signalHistory = signalHistory.filter(h => (now - h.ts) < HISTORY_TTL);
-  // Add new signals
-  pairResults.forEach(s => {
-    if (s.signals) {
-      s.signals.forEach(sig => {
-        // Avoid exact duplicates (same pair + direction within 5 minutes)
-        const isDupe = signalHistory.some(h =>
-          h.sym === s.sym && h.dir === sig.dir && (now - h.ts) < 5 * 60 * 1000
-        );
-        if (!isDupe) {
-          // Send Telegram notification for ★★★ signals only
-          if (sig.conf === 3) {
-            sendTelegram(formatTelegramSignal(s, sig));
-          }
-          signalHistory.push({
-            sym:       s.sym,
-            price:     s.price,
-            dir:       sig.dir,
-            score:     sig.score,
-            conf:      sig.conf,
-            sl:        sig.sl,
-            tp1:       sig.tp1,
-            tp2:       sig.tp2,
-            swing:     sig.swing,
-            scalp:     sig.scalp,
-            aligned:   sig.aligned,
-            trendNote: sig.trendNote,
-            rsi:       s.rsi,
-            atr:       s.atr,
-            ts:        now,
-            timeStr:   new Date(now).toUTCString().slice(17, 25)
-          });
-        }
-      });
-    }
+  results.forEach(s => {
+    if (!s.signals) return;
+    s.signals.forEach(sig => {
+      const isDupe = signalHistory.some(h =>
+        h.sym === s.sym && h.dir === sig.dir && (now - h.ts) < 5*60*1000
+      );
+      if (!isDupe) {
+        if (sig.conf === 3) sendTelegram(formatTGSignal(s, sig));
+        signalHistory.push({
+          sym:s.sym, price:s.price, dir:sig.dir, score:sig.score,
+          conf:sig.conf, sl:sig.sl, tp1:sig.tp1, tp2:sig.tp2,
+          swing:sig.swing, scalp:sig.scalp, aligned:sig.aligned,
+          trendNote:sig.trendNote, rsi:s.rsi, atr:s.atr,
+          ts:now, timeStr:new Date(now).toUTCString().slice(17,25)
+        });
+      }
+    });
   });
 }
 
-async function buildSignals() {
-  console.log(`Scanning ${PAIRS.length} pairs — 1 call per pair...`);
-  const data = [];
+// ── SCAN ─────────────────────────────────────────────────
+let cache = { data:null, ts:0 };
+const CACHE_TTL = 60*1000;
 
+async function buildSignals() {
+  console.log('Starting scan...');
+  const data = [];
   for (const pair of PAIRS) {
     try {
-      // One call: 200 x 1H candles = ~8 days of hourly data
-      const resp = await ccFetch(
-        `/data/v2/histohour?fsym=${pair.cc}&tsym=USD&limit=200`
-      );
-      // Drop last candle (open/incomplete)
-      const candles1h = resp.Data.Data.slice(0, -1).map(c => ({
-        time:   c.time,
-        open:   c.open,
-        high:   c.high,
-        low:    c.low,
-        close:  c.close,
-        volume: c.volumeto || 0
-      }));
-
-      if (candles1h.length < 30) {
-        console.error(`${pair.sym}: insufficient candles (${candles1h.length})`);
-        continue;
-      }
-
-      // Derive 4H candles from 1H — no extra API call needed
-      const candles4h = derive4HCandles(candles1h);
-
-      const result = await processPairData(pair, candles1h, candles4h);
+      const result = await processPair(pair);
       data.push(result);
-      console.log(`✓ ${pair.sym}`);
-    } catch (e) {
-      console.error(`✗ ${pair.sym}: ${e.message}`);
+    } catch(e) {
+      console.error(`${pair.sym}: ${e.message}`);
     }
-    // 1.5s gap between pairs — well within CC free tier limits
-    await new Promise(r => setTimeout(r, 1500));
+    await new Promise(r => setTimeout(r, 800));
   }
-
-  console.log(`Scan complete: ${data.length}/${PAIRS.length} pairs`);
+  console.log(`Scan done: ${data.length}/${PAIRS.length}`);
   if (data.length === 0) throw new Error('All requests failed');
   addToHistory(data);
   return data;
@@ -455,63 +363,41 @@ app.get('/api/scan', async (req, res) => {
   try {
     const now = Date.now();
     if (cache.data && (now - cache.ts) < CACHE_TTL) {
-      return res.json({
-        ok: true,
-        data: cache.data,
-        history: signalHistory.slice().reverse(),
-        cached: true,
-        timestamp: new Date().toISOString()
-      });
+      return res.json({ ok:true, data:cache.data, history:signalHistory.slice().reverse(), cached:true, timestamp:new Date().toISOString() });
     }
     const data = await buildSignals();
-    cache = { data, ts: Date.now() };
-    res.json({
-      ok: true,
-      data,
-      history: signalHistory.slice().reverse(), // newest first
-      cached: false,
-      timestamp: new Date().toISOString()
-    });
-  } catch (e) {
+    cache = { data, ts:Date.now() };
+    res.json({ ok:true, data, history:signalHistory.slice().reverse(), cached:false, timestamp:new Date().toISOString() });
+  } catch(e) {
     console.error('Scan error:', e.message);
-    res.status(500).json({ ok: false, error: e.message });
+    // Return cached data if available rather than error
+    if (cache.data) {
+      return res.json({ ok:true, data:cache.data, history:signalHistory.slice().reverse(), cached:true, stale:true, timestamp:new Date().toISOString() });
+    }
+    res.status(500).json({ ok:false, error:e.message });
   }
 });
 
-// ── TRADE ALERT ENDPOINT ─────────────────────────────────
-app.post('/api/trade-alert', express.json(), async (req, res) => {
+app.post('/api/trade-alert', async (req, res) => {
   const { sym, dir, entry, sl, tp1, tp2, score, conf, type } = req.body;
-  let message = '';
-  if (type === 'sl_hit') {
-    message = `🚨 <b>STOP LOSS HIT</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry}\nStop: ${sl}\n\nTrade closed at stop loss.\n\n🤖 Defi Insider Signal Bot`;
-  } else if (type === 'tp1_hit') {
-    message = `🎯 <b>TP1 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry}\nTP1: ${tp1}\n\nConsider moving stop to breakeven.\n\n🤖 Defi Insider Signal Bot`;
-  } else if (type === 'tp2_hit') {
-    message = `🏆 <b>TP2 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry}\nTP2: ${tp2}\n\nFull target hit!\n\n🤖 Defi Insider Signal Bot`;
-  } else if (type === 'entered') {
-    message = `📥 <b>TRADE ENTERED</b>\n\n${dir === 'BUY' ? '🟢' : '🔴'} <b>${sym}/USDT ${dir}</b>\nScore: ${score}/10 ${'⭐'.repeat(conf)}\n\n📍 Entry: ${entry}\n🛑 Stop:  ${sl}\n🎯 TP1:   ${tp1}\n🎯 TP2:   ${tp2}\n\n🤖 Defi Insider Signal Bot`;
-  }
-  if (message) await sendTelegram(message);
-  res.json({ ok: true });
+  const msgs = {
+    entered: `📥 <b>TRADE ENTERED</b>\n\n${dir==='BUY'?'🟢':'🔴'} <b>${sym}/USDT ${dir}</b>\nScore: ${score}/10 ${'⭐'.repeat(conf)}\n\n📍 Entry: ${entry}\n🛑 Stop:  ${sl}\n🎯 TP1:   ${tp1}\n🎯 TP2:   ${tp2}\n\n🤖 Defi Insider Signal Bot`,
+    sl_hit:  `🚨 <b>STOP LOSS HIT</b>\n\n<b>${sym}/USDT ${dir}</b>\nEntry: ${entry} → Stop: ${sl}\n\n🤖 Defi Insider Signal Bot`,
+    tp1_hit: `🎯 <b>TP1 REACHED</b>\n\n<b>${sym}/USDT ${dir}</b>\nTP1: ${tp1} hit ✅\nConsider moving stop to breakeven.\n\n🤖 Defi Insider Signal Bot`
+  };
+  if (msgs[type]) await sendTelegram(msgs[type]);
+  res.json({ ok:true });
 });
 
 app.get('/api/health', async (req, res) => {
   try {
-    const { default: fetch } = await import('node-fetch');
-    const resp = await ccFetch('/data/v2/histohour?fsym=BTC&tsym=USD&limit=2');
-    const btcPrice = resp.Data.Data[resp.Data.Data.length - 1]?.close;
-    res.json({
-      ok: true,
-      cryptocompare: btcPrice ? 'connected' : 'error',
-      btcPrice: btcPrice ? '$' + btcPrice.toLocaleString() : null,
-      pairs: PAIRS.map(p => p.sym),
-      method: 'single 1H fetch per pair, 4H derived',
-      scoring: 'sequential hierarchy — trend + MACD gate'
-    });
-  } catch (e) {
-    res.json({ ok: false, error: e.message });
+    const candles = await fetchCC('BTC');
+    const price = candles[candles.length-1]?.close;
+    res.json({ ok:true, source:'CryptoCompare', btcPrice:'$'+price?.toLocaleString(), pairs:PAIRS.map(p=>p.sym), cached:Object.keys(pairCache) });
+  } catch(e) {
+    res.json({ ok:false, error:e.message });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Defi Insider Signal Bot running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Defi Insider Signal Bot on port ${PORT}`));
