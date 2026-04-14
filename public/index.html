@@ -191,6 +191,27 @@ tr.rh td{border-left:2px solid #1a3a2a;}
 .li{padding:3px 12px;border-bottom:0.5px solid #080e14;display:flex;gap:10px;font-size:10px;}
 .lt{color:#0d3020;min-width:55px;}
 .lbuy{color:#00ff88;}.lsell{color:#ff4466;}.linfo{color:#1a5aaa;}.lerr{color:#ffaa00;}.lm{color:#1a4a3a;}
+
+/* BACKTEST */
+.bt-section{margin-bottom:8px;}
+.bt-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;}
+.bt-card{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;overflow:hidden;}
+.bt-header{padding:10px 14px;border-bottom:0.5px solid #0d2030;background:#050a0e;display:flex;align-items:center;justify-content:space-between;}
+.bt-stars{font-size:13px;letter-spacing:1px;}
+.bt-wr{font-size:28px;font-weight:700;font-family:'Courier New',monospace;padding:12px 14px 4px;}
+.bt-meta{padding:0 14px 10px;font-size:9px;color:#1a4a3a;line-height:1.8;}
+.bt-bar-wrap{padding:0 14px 12px;}
+.bt-bar-track{height:6px;background:#0d2030;border-radius:3px;overflow:hidden;}
+.bt-bar-fill{height:100%;border-radius:3px;transition:width .5s;}
+
+.bt-bottom{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.bt-table-wrap{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;overflow:hidden;}
+.bt-table{width:100%;border-collapse:collapse;}
+.bt-table th{font-size:9px;color:#1a4a3a;padding:5px 8px;border-bottom:0.5px solid #0d2030;background:#050a0e;text-transform:uppercase;}
+.bt-table td{font-size:10px;padding:5px 8px;border-bottom:0.5px solid #080e14;}
+.bt-table tr:hover td{background:#0a1520;}
+.bt-status{font-size:10px;color:#1a4a3a;padding:20px;text-align:center;line-height:2;}
+.bt-run-btn{font-size:9px;padding:3px 10px;border-radius:3px;border:0.5px solid #0d4a2a;background:#0a2a1a;color:#00ff88;cursor:pointer;text-transform:uppercase;}
 </style>
 </head>
 <body>
@@ -384,6 +405,38 @@ tr.rh td{border-left:2px solid #1a3a2a;}
           <div class="acc-foot-label">Pending</div>
           <div class="acc-foot-val yv" id="pending-count">0</div>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BACKTEST RESULTS -->
+<div class="bt-section">
+  <div style="font-size:9px;color:#1a4a3a;text-transform:uppercase;letter-spacing:1px;padding:0 2px;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between;">
+    <span>🔬 Backtest Results — Last 83 Days</span>
+    <span style="font-size:9px;color:#1a4a3a;" id="bt-ran-at">Loading...</span>
+  </div>
+
+  <!-- STAR COMPARISON -->
+  <div class="bt-grid" id="bt-star-grid">
+    <div class="bt-card"><div class="bt-status">Running backtest on startup...<br>Results available in ~60 seconds.<br>Refresh the page or wait.</div></div>
+    <div class="bt-card"></div>
+    <div class="bt-card"></div>
+  </div>
+
+  <!-- BOTTOM: BY PAIR + BY DIRECTION -->
+  <div class="bt-bottom">
+    <div class="bt-table-wrap">
+      <div class="ph"><span class="pt">Win Rate by Pair</span></div>
+      <table class="bt-table">
+        <thead><tr><th>Pair</th><th>Signals</th><th>Wins</th><th>Losses</th><th>Win Rate</th><th>Avg Win</th></tr></thead>
+        <tbody id="bt-pair-tbody"><tr><td colspan="6" style="padding:12px;text-align:center;color:#1a4a3a;">Loading...</td></tr></tbody>
+      </table>
+    </div>
+    <div class="bt-table-wrap">
+      <div class="ph"><span class="pt">Win Rate by Direction</span></div>
+      <div id="bt-dir-panel" style="padding:16px;">
+        <div style="color:#1a4a3a;font-size:10px;text-align:center;">Loading...</div>
       </div>
     </div>
   </div>
@@ -788,6 +841,95 @@ function renderLog(){
   }).join('');
 }
 
+
+// ── BACKTEST ──────────────────────────────────────────────
+let btData = null;
+
+function wrColor(wr) {
+  if(wr === null) return '#1a4a3a';
+  if(wr >= 60) return '#00ff88';
+  if(wr >= 50) return '#ffcc00';
+  return '#ff4466';
+}
+
+function renderBacktest() {
+  if(!btData) return;
+  const r = btData;
+  document.getElementById('bt-ran-at').textContent = 'Last run: ' + new Date(r.ranAt).toUTCString().slice(0,25);
+
+  // Star cards
+  const starNames = { 3:'★★★ High Conviction', 2:'★★ Moderate', 1:'★ Weak' };
+  const starColors = { 3:'#00ff88', 2:'#ffcc00', 1:'#ff4466' };
+  document.getElementById('bt-star-grid').innerHTML = [3,2,1].map(s => {
+    const d = r.byStars[s];
+    const wr = d.winRate;
+    const col = wrColor(wr);
+    const fillW = wr || 0;
+    return `<div class="bt-card">
+      <div class="bt-header">
+        <span class="bt-stars" style="color:${starColors[s]}">${'★'.repeat(s)}${'☆'.repeat(3-s)}</span>
+        <span style="font-size:9px;color:#1a4a3a;">${d.total} signals</span>
+      </div>
+      <div class="bt-wr" style="color:${col}">${wr !== null ? wr+'%' : '—'}</div>
+      <div class="bt-meta">
+        Win Rate (TP1 hit before SL)<br>
+        ✅ Wins: <span style="color:#00ff88;">${d.wins}</span> &nbsp;
+        ❌ Losses: <span style="color:#ff4466;">${d.losses}</span> &nbsp;
+        ⏰ Expired: <span style="color:#4a6a5a;">${d.expired}</span><br>
+        Avg win: <span style="color:#00ff88;">${d.avgWinH !== null ? d.avgWinH+'H' : '--'}</span> &nbsp;
+        Avg loss: <span style="color:#ff4466;">${d.avgLossH !== null ? d.avgLossH+'H' : '--'}</span>
+      </div>
+      <div class="bt-bar-wrap">
+        <div class="bt-bar-track"><div class="bt-bar-fill" style="width:${fillW}%;background:${col};"></div></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // By pair table
+  const pairs = Object.entries(r.byPair).sort((a,b) => (b[1].winRate||0) - (a[1].winRate||0));
+  document.getElementById('bt-pair-tbody').innerHTML = pairs.map(([sym, d]) => {
+    const col = wrColor(d.winRate);
+    return `<tr>
+      <td style="font-weight:700;color:#fff;">${sym}</td>
+      <td style="color:#4a6a5a;">${d.total}</td>
+      <td style="color:#00ff88;">${d.wins}</td>
+      <td style="color:#ff4466;">${d.losses}</td>
+      <td style="color:${col};font-weight:700;">${d.winRate !== null ? d.winRate+'%' : '—'}</td>
+      <td style="color:#00ff88;">${d.avgWinH !== null ? d.avgWinH+'H' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  // By direction
+  const buy = r.byDir.BUY, sell = r.byDir.SELL;
+  document.getElementById('bt-dir-panel').innerHTML = `
+    <div style="margin-bottom:16px;">
+      <div style="font-size:9px;color:#1a4a3a;text-transform:uppercase;margin-bottom:8px;">BUY Signals</div>
+      <div style="font-size:26px;font-weight:700;color:${wrColor(buy.winRate)};font-family:monospace;">${buy.winRate !== null ? buy.winRate+'%' : '—'}</div>
+      <div style="font-size:9px;color:#1a4a3a;margin-top:4px;">${buy.total} signals · ${buy.wins} wins · ${buy.losses} losses</div>
+      <div style="margin-top:6px;height:4px;background:#0d2030;border-radius:2px;overflow:hidden;"><div style="width:${buy.winRate||0}%;height:100%;background:${wrColor(buy.winRate)};border-radius:2px;"></div></div>
+    </div>
+    <div>
+      <div style="font-size:9px;color:#1a4a3a;text-transform:uppercase;margin-bottom:8px;">SELL Signals</div>
+      <div style="font-size:26px;font-weight:700;color:${wrColor(sell.winRate)};font-family:monospace;">${sell.winRate !== null ? sell.winRate+'%' : '—'}</div>
+      <div style="font-size:9px;color:#1a4a3a;margin-top:4px;">${sell.total} signals · ${sell.wins} wins · ${sell.losses} losses</div>
+      <div style="margin-top:6px;height:4px;background:#0d2030;border-radius:2px;overflow:hidden;"><div style="width:${sell.winRate||0}%;height:100%;background:${wrColor(sell.winRate)};border-radius:2px;"></div></div>
+    </div>`;
+}
+
+async function fetchBacktest() {
+  try {
+    const res = await fetch('/api/backtest');
+    const json = await res.json();
+    if(json.status === 'complete' && json.results) {
+      btData = json.results;
+      renderBacktest();
+    } else if(json.status === 'running') {
+      document.getElementById('bt-ran-at').textContent = 'Backtest running...';
+      setTimeout(fetchBacktest, 15000); // retry in 15s
+    }
+  } catch(e) { console.error('Backtest fetch:', e.message); }
+}
+
 // ── SCAN ─────────────────────────────────────────────────
 async function runScan(){
   if(scanning) return;
@@ -839,6 +981,7 @@ setInterval(()=>{
 },1000);
 
 renderTracker();
+fetchBacktest();
 runScan();
 </script>
 </body>
