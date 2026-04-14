@@ -317,6 +317,114 @@ function getTrend(closes, fast, slow) {
   return { trend: calcEMA(closes,fast) > calcEMA(closes,slow) ? 'bull' : 'bear' };
 }
 
+// ── NEW INDICATOR 1: PRICE STRUCTURE ─────────────────────
+// Identifies swing highs and lows from OHLC candles.
+// Higher highs + higher lows = bullish structure (early uptrend)
+// Lower highs + lower lows = bearish structure (early downtrend)
+// Fires BEFORE RSI/MACD confirm — genuinely leading.
+function getPriceStructure(candles) {
+  if (candles.length < 20) return null;
+  const recent = candles.slice(-30); // last 30 candles
+
+  // Find swing highs — candle where high > both neighbours
+  const swingHighs = [];
+  for (let i = 1; i < recent.length - 1; i++) {
+    if (recent[i].high > recent[i-1].high && recent[i].high > recent[i+1].high) {
+      swingHighs.push(recent[i].high);
+    }
+  }
+
+  // Find swing lows — candle where low < both neighbours
+  const swingLows = [];
+  for (let i = 1; i < recent.length - 1; i++) {
+    if (recent[i].low < recent[i-1].low && recent[i].low < recent[i+1].low) {
+      swingLows.push(recent[i].low);
+    }
+  }
+
+  if (swingHighs.length < 2 || swingLows.length < 2) return { structure: 'unclear' };
+
+  const lastHH = swingHighs[swingHighs.length - 1];
+  const prevHH = swingHighs[swingHighs.length - 2];
+  const lastLL = swingLows[swingLows.length - 1];
+  const prevLL = swingLows[swingLows.length - 2];
+
+  const higherHighs = lastHH > prevHH;
+  const higherLows  = lastLL > prevLL;
+  const lowerHighs  = lastHH < prevHH;
+  const lowerLows   = lastLL < prevLL;
+
+  if (higherHighs && higherLows)  return { structure: 'bull', strength: 'confirmed' };
+  if (lowerHighs  && lowerLows)   return { structure: 'bear', strength: 'confirmed' };
+  if (higherHighs || higherLows)  return { structure: 'bull', strength: 'partial' };
+  if (lowerHighs  || lowerLows)   return { structure: 'bear', strength: 'partial' };
+  return { structure: 'ranging' };
+}
+
+// ── NEW INDICATOR 2: EMA SLOPE ACCELERATION ──────────────
+// Measures how fast EMA20 is rising or falling.
+// Accelerating upward slope = trend strengthening = good entry
+// Decelerating slope = trend weakening = avoid entry
+// More leading than EMA crossover alone.
+function getEMASlope(closes) {
+  if (closes.length < 25) return null;
+  const period = 20;
+
+  // Calculate EMA20 at 5 points over last 10 candles
+  function emaAt(arr) { return calcEMA(arr, period); }
+
+  const e1 = emaAt(closes.slice(0, -8));
+  const e2 = emaAt(closes.slice(0, -6));
+  const e3 = emaAt(closes.slice(0, -4));
+  const e4 = emaAt(closes.slice(0, -2));
+  const e5 = emaAt(closes);
+
+  const slope1 = e2 - e1; // older slope
+  const slope2 = e5 - e4; // recent slope
+
+  const direction  = slope2 > 0 ? 'up' : 'down';
+  const accelerating = Math.abs(slope2) > Math.abs(slope1);
+  const slopeStrength = Math.abs(slope2) / (closes[closes.length-1] * 0.001); // normalise
+
+  return {
+    direction,
+    accelerating,
+    slopeStrength: +slopeStrength.toFixed(2),
+    slope: +slope2.toFixed(4)
+  };
+}
+
+// ── NEW INDICATOR 3: VOLATILITY SQUEEZE ──────────────────
+// Detects when price is compressed (coiling) before a breakout.
+// Current ATR < 75% of 20-period average ATR = squeeze active
+// When squeeze releases with directional move = catch trend start
+function getVolatilitySqueeze(candles) {
+  if (candles.length < 25) return null;
+
+  // Current ATR (last 5 candles)
+  const recentATR = calcATR(candles.slice(-6), 5);
+
+  // Average ATR over last 20 candles
+  const avgATR = calcATR(candles.slice(-21), 20);
+
+  if (avgATR === 0) return null;
+
+  const ratio = recentATR / avgATR;
+  const squeezed = ratio < 0.75; // compressed below 75% of average
+
+  // Direction of breakout — which way did price move in last 3 candles?
+  const last3 = candles.slice(-3);
+  const priceMove = last3[last3.length-1].close - last3[0].open;
+  const breakoutDir = priceMove > 0 ? 'bull' : 'bear';
+
+  return {
+    squeezed,
+    ratio: +ratio.toFixed(2),
+    breakoutDir,
+    releasing: squeezed === false && ratio < 1.1 // just came out of squeeze
+  };
+}
+
 // ══════════════════════════════════════════════════════════
 // SIGNAL LOGIC v4 — BACKTEST-INFORMED
 //
@@ -350,7 +458,7 @@ function getTrend(closes, fast, slow) {
 //     Break-even at 33% win rate — achievable at all tiers
 // ══════════════════════════════════════════════════════════
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze) {
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
   const trend4hDir = trend4h?.trend || null;
@@ -384,15 +492,42 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
     // Volume — only penalise extreme lows
     if (volRatio < 0.005) score -= 0.5;
 
+    // ── NEW INDICATOR BONUSES (BUY) ────────────────────
+    // Price Structure — early trend confirmation
+    if (priceStruct) {
+      if (priceStruct.structure === 'bull' && priceStruct.strength === 'confirmed') score += 1.5;
+      else if (priceStruct.structure === 'bull' && priceStruct.strength === 'partial')  score += 0.75;
+      else if (priceStruct.structure === 'bear' && priceStruct.strength === 'confirmed') score -= 1.5;
+      else if (priceStruct.structure === 'bear' && priceStruct.strength === 'partial')   score -= 0.75;
+    }
+
+    // EMA Slope — trend acceleration
+    if (emaSlope) {
+      if (emaSlope.direction === 'up'   && emaSlope.accelerating) score += 1.0;
+      else if (emaSlope.direction === 'up' && !emaSlope.accelerating) score += 0.25;
+      else if (emaSlope.direction === 'down' && emaSlope.accelerating) score -= 1.0;
+      else if (emaSlope.direction === 'down') score -= 0.25;
+    }
+
+    // Volatility Squeeze — catch trend at start of breakout
+    if (squeeze) {
+      if (squeeze.releasing && squeeze.breakoutDir === 'bull') score += 1.5; // squeeze firing bullish
+      else if (squeeze.squeezed) score += 0.5; // coiling — potential incoming move
+      else if (squeeze.releasing && squeeze.breakoutDir === 'bear') score -= 1.0; // firing bearish
+    }
+
     score = Math.max(0, Math.min(10, +score.toFixed(1)));
     const conf = score >= 8.0 ? 3 : score >= 6.5 ? 2 : score >= 5.5 ? 1 : 0;
 
     if (conf > 0) {
       const aligned = trend4hDir === 'bull';
+      const structNote = priceStruct ? ` · Structure: ${priceStruct.structure}` : '';
+      const slopeNote  = emaSlope    ? ` · Slope: ${emaSlope.direction}${emaSlope.accelerating?' ↑acc':''}` : '';
+      const sqzNote    = squeeze?.releasing ? ' · Squeeze firing' : squeeze?.squeezed ? ' · Coiling' : '';
       const trendNote = trend4hDir
-        ? (aligned ? `4H aligned · MACD bullish · RSI ${rsi} · BB ${bb.pct}%`
-                   : `4H counter · MACD bullish · RSI ${rsi} · BB ${bb.pct}% — reduce size`)
-        : `MACD bullish · RSI ${rsi} · BB ${bb.pct}%`;
+        ? (aligned ? `4H aligned · MACD bullish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`
+                   : `4H counter · MACD bullish · RSI ${rsi} · BB ${bb.pct}% — reduce size${structNote}${slopeNote}`)
+        : `MACD bullish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`;
       results.push({
         dir:'BUY', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'BUY'  : 'WATCH',
@@ -431,15 +566,39 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
 
     if (volRatio < 0.005) score -= 0.5;
 
+    // ── NEW INDICATOR BONUSES (SELL) ───────────────────
+    if (priceStruct) {
+      if (priceStruct.structure === 'bear' && priceStruct.strength === 'confirmed') score += 1.5;
+      else if (priceStruct.structure === 'bear' && priceStruct.strength === 'partial')   score += 0.75;
+      else if (priceStruct.structure === 'bull' && priceStruct.strength === 'confirmed') score -= 1.5;
+      else if (priceStruct.structure === 'bull' && priceStruct.strength === 'partial')   score -= 0.75;
+    }
+
+    if (emaSlope) {
+      if (emaSlope.direction === 'down' && emaSlope.accelerating) score += 1.0;
+      else if (emaSlope.direction === 'down' && !emaSlope.accelerating) score += 0.25;
+      else if (emaSlope.direction === 'up' && emaSlope.accelerating) score -= 1.0;
+      else if (emaSlope.direction === 'up') score -= 0.25;
+    }
+
+    if (squeeze) {
+      if (squeeze.releasing && squeeze.breakoutDir === 'bear') score += 1.5;
+      else if (squeeze.squeezed) score += 0.5;
+      else if (squeeze.releasing && squeeze.breakoutDir === 'bull') score -= 1.0;
+    }
+
     score = Math.max(0, Math.min(10, +score.toFixed(1)));
     const conf = score >= 8.0 ? 3 : score >= 6.5 ? 2 : score >= 5.5 ? 1 : 0;
 
     if (conf > 0) {
       const aligned = trend4hDir === 'bear';
+      const structNote = priceStruct ? ` · Structure: ${priceStruct.structure}` : '';
+      const slopeNote  = emaSlope    ? ` · Slope: ${emaSlope.direction}${emaSlope.accelerating?' ↑acc':''}` : '';
+      const sqzNote    = squeeze?.releasing ? ' · Squeeze firing' : squeeze?.squeezed ? ' · Coiling' : '';
       const trendNote = trend4hDir
-        ? (aligned ? `4H aligned · MACD bearish · RSI ${rsi} · BB ${bb.pct}%`
-                   : `4H counter · MACD bearish · RSI ${rsi} · BB ${bb.pct}% — reduce size`)
-        : `MACD bearish · RSI ${rsi} · BB ${bb.pct}%`;
+        ? (aligned ? `4H aligned · MACD bearish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`
+                   : `4H counter · MACD bearish · RSI ${rsi} · BB ${bb.pct}% — reduce size${structNote}${slopeNote}`)
+        : `MACD bearish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`;
       results.push({
         dir:'SELL', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'SELL' : 'WATCH',
@@ -473,12 +632,18 @@ async function processPair(pair) {
   const vol      = (lastC.volume||0)*price;
   const mcap     = pair.mcap||0;
   const volRatio = mcap>0 ? vol/mcap : 0;
-  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price);
+  // Calculate three new leading indicators
+  const priceStruct = getPriceStructure(candles1h);
+  const emaSlope    = getEMASlope(closes1h);
+  const squeeze     = getVolatilitySqueeze(candles1h);
+
+  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze);
   const topSig   = signals[0];
   console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pct}% 1H=${trend1h?.trend||'?'} 4H=${trend4h?.trend||'?'} → ${topSig?topSig.dir+' '+topSig.score+' ★'.repeat(topSig.conf):'HOLD'}`);
   return {
     sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h,
+    priceStruct, emaSlope, squeeze,
     score:    topSig?.score    || 5,
     swing:    topSig?.swing    || 'HOLD',
     scalp:    topSig?.scalp    || 'HOLD',
@@ -633,7 +798,10 @@ async function runBacktest() {
         const t1h  = getTrend(c1h, 9, 21);
         const t4h  = getTrend(c4h, 20, 50);
         const price = w1h[w1h.length-1].close;
-        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price);
+        const ps  = getPriceStructure(w1h);
+        const es  = getEMASlope(c1h);
+        const sq  = getVolatilitySqueeze(w1h);
+        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price, ps, es, sq);
         if (!sigs.length) continue;
         const sig = sigs[0];
         const outcome = checkOutcome(candles, idx, sig);
