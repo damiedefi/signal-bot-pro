@@ -487,8 +487,8 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
       swing: score >= 7.0 ? 'BUY' : 'WATCH',
       scalp: score >= 6.5 ? 'BUY' : 'WATCH',
       sl:  +(price - atr*1.5).toFixed(4),
-      tp1: +(price + atr*2.0).toFixed(4),
-      tp2: +(price + atr*3.5).toFixed(4)
+      tp1: +(price + atr*3.0).toFixed(4),
+      tp2: +(price + atr*5.0).toFixed(4)
     }];
   } else {
     return [{
@@ -496,8 +496,8 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price) {
       swing: score >= 7.0 ? 'SELL' : 'WATCH',
       scalp: score >= 6.5 ? 'SELL' : 'WATCH',
       sl:  +(price + atr*1.5).toFixed(4),
-      tp1: +(price - atr*2.0).toFixed(4),
-      tp2: +(price - atr*3.5).toFixed(4)
+      tp1: +(price - atr*3.0).toFixed(4),
+      tp2: +(price - atr*5.0).toFixed(4)
     }];
   }
 }
@@ -709,7 +709,12 @@ function runSignalLogicAt(candles, idx) {
   // Use same vol ratio proxy (no mcap data in historical, use vol/price ratio)
   const lastC   = window1h[window1h.length - 1];
   const price   = lastC.close;
-  const volRatio = 0.02; // neutral — no mcap in historical data
+  // Estimate volume ratio from last candle volume vs rolling average
+  // Higher than average volume = above 0.02, lower = below
+  const recentVols = window1h.slice(-20).map(c => c.volume);
+  const avgVol = recentVols.reduce((a,b)=>a+b,0) / recentVols.length;
+  const lastVol = window1h[window1h.length-1].volume;
+  const volRatio = avgVol > 0 ? (lastVol / avgVol) * 0.02 : 0.02;
 
   const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price);
   return signals.length > 0 ? { signal: signals[0], rsi, macd, bb, atr, price } : null;
@@ -758,40 +763,49 @@ async function runBacktest() {
       if (candles.length < 100) { console.log(`${pair.sym}: insufficient history`); continue; }
 
       const pairSignals = [];
-      let lastSignalIdx = -10; // Prevent signals within 10 candles of each other
 
-      // Walk through candles from idx 50 to end
-      for (let idx = 50; idx < candles.length - 24; idx++) {
-        // Skip if too close to last signal (avoid overlapping trades)
-        if (idx - lastSignalIdx < 10) continue;
+      // KEY FIX: nextIdx tracks where to resume after each trade resolves.
+      // After a signal fires, we jump to the candle where it resolved (TP1/SL hit
+      // or 24H expired) — not just skip 10 candles. This prevents the backtest
+      // from firing overlapping signals in the same trend run.
+      let nextIdx = 50;
 
+      while (nextIdx < candles.length - 25) {
+        const idx = nextIdx;
         const result = runSignalLogicAt(candles, idx);
-        if (!result) continue;
+
+        if (!result) {
+          nextIdx++;
+          continue;
+        }
 
         const { signal } = result;
         const outcome = checkOutcome(candles, idx, signal);
 
         pairSignals.push({
-          sym:     pair.sym,
-          dir:     signal.dir,
-          conf:    signal.conf,
-          score:   signal.score,
-          price:   result.price,
-          sl:      signal.sl,
-          tp1:     signal.tp1,
-          rsi:     result.rsi,
-          time:    candles[idx].time,
+          sym:   pair.sym,
+          dir:   signal.dir,
+          conf:  signal.conf,
+          score: signal.score,
+          price: result.price,
+          sl:    signal.sl,
+          tp1:   signal.tp1,
+          rsi:   result.rsi,
+          time:  candles[idx].time,
           ...outcome
         });
 
-        lastSignalIdx = idx;
         allResults.push(pairSignals[pairSignals.length - 1]);
+
+        // Resume scanning AFTER this trade resolved — no overlapping trades
+        // outcome.hours = how many candles forward until resolution
+        // Add 1 buffer candle before looking for next signal
+        nextIdx = idx + outcome.hours + 1;
       }
 
       pairResults[pair.sym] = pairSignals;
-      console.log(`${pair.sym}: ${pairSignals.length} signals found`);
+      console.log(`${pair.sym}: ${pairSignals.length} signals`);
 
-      // Delay between pairs to avoid rate limiting
       await new Promise(r => setTimeout(r, 1500));
     } catch(e) {
       console.error(`Backtest ${pair.sym}: ${e.message}`);
