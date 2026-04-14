@@ -21,7 +21,7 @@ body{background:#060a0f;color:#c8d8e8;font-family:'Courier New',monospace;font-s
 .badge{font-size:9px;padding:2px 7px;border-radius:3px;background:#0a2a1a;color:#00ff88;border:0.5px solid #0d4a2a;}
 
 /* STATS */
-.stats{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:8px;}
+.stats{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:8px;}
 .stat{background:#080e14;border:0.5px solid #0d2030;border-radius:5px;padding:8px 12px;}
 .stat-label{font-size:9px;color:#1a4a3a;text-transform:uppercase;letter-spacing:.8px;margin-bottom:3px;}
 .stat-val{font-size:20px;font-weight:700;font-family:'Courier New',monospace;}
@@ -240,6 +240,7 @@ tr.rh td{border-left:2px solid #1a3a2a;}
   <div class="stat"><div class="stat-label">Win Rate</div><div class="stat-val cv" id="s-wr">—</div><div class="stat-sub" id="s-wr-sub">no data yet</div></div>
   <div class="stat"><div class="stat-label">Signals Tracked</div><div class="stat-val bv" id="s-tracked">—</div><div class="stat-sub">★★★ only</div></div>
   <div class="stat"><div class="stat-label">Next Scan</div><div class="stat-val wv" id="s-next">—</div><div class="stat-sub" id="s-last">waiting...</div></div>
+  <div class="stat" id="candle-stat"><div class="stat-label">Candle Close</div><div class="stat-val wv" id="s-candle">—</div><div class="stat-sub" id="s-candle-sub">signals fire at :55</div></div>
 </div>
 
 <!-- TICKER -->
@@ -619,7 +620,13 @@ function renderSigCard(sig, s, showTakeBtn=true){
   const reason=reasoning(s,sig);
   const taken=openTrades.some(t=>t.sym===s.sym&&t.dir===sig.dir);
   return `<div class="si ${dc}">
-    <div class="si-top"><span class="si-pair">${s.sym}/USDT</span><span class="si-dir-${dc}">${sig.dir}</span></div>
+    <div class="si-top">
+    <span class="si-pair">${s.sym}/USDT</span>
+    <div style="display:flex;align-items:center;gap:5px;">
+      ${sig.confirmedAtClose ? '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#0a2a1a;color:#00ff88;border:0.5px solid #0d4a2a;">✓ CONFIRMED</span>' : '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#1a1400;color:#ffcc00;border:0.5px solid #4a3a00;">⏳ PENDING</span>'}
+      <span class="si-dir-${dc}">${sig.dir}</span>
+    </div>
+  </div>
     <div class="si-score-row">
       <div class="si-circle ${scCls}"><span class="si-big" style="color:${scCol}">${sig.score}</span><span class="si-sm">/10</span></div>
       <div class="si-meta">
@@ -986,8 +993,32 @@ async function runScan(){
 
 document.getElementById('scan-btn').addEventListener('click', runScan);
 setInterval(()=>{
+  const now = new Date();
   document.getElementById('clock').textContent=ts()+' UTC';
   if(!scanning){ scanTimer--; document.getElementById('s-next').textContent=scanTimer+'s'; if(scanTimer<=0) runScan(); }
+
+  // Candle close countdown
+  const min = now.getUTCMinutes();
+  const sec = now.getUTCSeconds();
+  const minsLeft = 59 - min;
+  const secsLeft = 59 - sec;
+  const nearClose = min >= 55;
+  const candleEl = document.getElementById('s-candle');
+  const candleSubEl = document.getElementById('s-candle-sub');
+  const candleStatEl = document.getElementById('candle-stat');
+  if(candleEl){
+    if(nearClose){
+      candleEl.textContent = '🔔 NOW';
+      candleEl.style.color = '#00ff88';
+      candleSubEl.textContent = 'Signals confirming';
+      candleStatEl.style.borderColor = '#00ff88';
+    } else {
+      candleEl.textContent = minsLeft+'m '+secsLeft+'s';
+      candleEl.style.color = '#c8d8e8';
+      candleSubEl.textContent = 'signals fire at :55';
+      candleStatEl.style.borderColor = '#0d2030';
+    }
+  }
 },1000);
 
 renderTracker();
