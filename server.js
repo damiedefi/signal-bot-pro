@@ -442,6 +442,241 @@ function getVolatilitySqueeze(candles) {
   };
 }
 
+// ── INDICATOR 4: VOLUME SURGE ────────────────────────────
+// Measures whether current volume is significantly above average.
+// 2x average = institutional participation = strong confirmation.
+// Uses volumeto (USD volume) from candles.
+function getVolumeSurge(candles) {
+  if (candles.length < 21) return null;
+  const recent = candles.slice(-21);
+  const avgVol = recent.slice(0, 20).reduce((s, c) => s + c.volume, 0) / 20;
+  const curVol = recent[recent.length - 1].volume;
+  if (avgVol === 0) return null;
+  const ratio = curVol / avgVol;
+  return {
+    ratio: +ratio.toFixed(2),
+    surge: ratio >= 2.0,      // strong surge
+    elevated: ratio >= 1.5,   // above average
+    weak: ratio < 0.5         // very low volume
+  };
+}
+
+// ── INDICATOR 5: RSI DIVERGENCE ──────────────────────────
+// Bullish divergence: price makes lower low, RSI makes higher low
+// Bearish divergence: price makes higher high, RSI makes lower high
+// One of the most reliable reversal signals — genuinely leading.
+function getRSIDivergence(candles, rsiSeries) {
+  if (candles.length < 20 || rsiSeries.length < 20) return null;
+
+  const lookback = 15;
+  const priceSlice = candles.slice(-lookback);
+  const rsiSlice   = rsiSeries.slice(-lookback);
+
+  // Find price swing lows and highs
+  let priceLow1Idx = 0, priceLow2Idx = 0;
+  let priceHigh1Idx = 0, priceHigh2Idx = 0;
+
+  for (let i = 1; i < priceSlice.length - 1; i++) {
+    if (priceSlice[i].low < priceSlice[priceLow1Idx].low) {
+      priceLow2Idx = priceLow1Idx;
+      priceLow1Idx = i;
+    }
+    if (priceSlice[i].high > priceSlice[priceHigh1Idx].high) {
+      priceHigh2Idx = priceHigh1Idx;
+      priceHigh1Idx = i;
+    }
+  }
+
+  // Bullish divergence: price lower low, RSI higher low
+  const bullDiv = priceLow1Idx > priceLow2Idx &&
+    priceSlice[priceLow1Idx].low < priceSlice[priceLow2Idx].low &&
+    rsiSlice[priceLow1Idx] > rsiSlice[priceLow2Idx];
+
+  // Bearish divergence: price higher high, RSI lower high
+  const bearDiv = priceHigh1Idx > priceHigh2Idx &&
+    priceSlice[priceHigh1Idx].high > priceSlice[priceHigh2Idx].high &&
+    rsiSlice[priceHigh1Idx] < rsiSlice[priceHigh2Idx];
+
+  return { bullDiv, bearDiv };
+}
+
+// Helper: calculate RSI series (array of RSI values over time)
+function calcRSISeries(closes, period = 14) {
+  const series = [];
+  for (let i = period; i < closes.length; i++) {
+    series.push(calcRSI(closes.slice(0, i + 1), period));
+  }
+  return series;
+}
+
+// ── INDICATOR 6: MULTI-TIMEFRAME RSI ─────────────────────
+// RSI oversold/overbought on BOTH 1H and 4H = much stronger signal
+// than 1H alone. Confluence across timeframes = higher conviction.
+function getMTFRSI(closes1h, closes4h) {
+  if (closes1h.length < 15 || closes4h.length < 15) return null;
+  const rsi1h = calcRSI(closes1h, 14);
+  const rsi4h = calcRSI(closes4h, 14);
+  return {
+    rsi1h, rsi4h,
+    bothOversold:   rsi1h < 40 && rsi4h < 40,
+    bothOverbought: rsi1h > 60 && rsi4h > 60,
+    deeplyBothOversold:   rsi1h < 30 && rsi4h < 35,
+    deeplyBothOverbought: rsi1h > 70 && rsi4h > 65
+  };
+}
+
+// ── INDICATOR 7: CANDLE PATTERN RECOGNITION ──────────────
+// Detects high-probability reversal candle patterns from OHLC.
+// Hammer, bullish engulfing, doji, shooting star, bearish engulfing.
+function getCandlePattern(candles) {
+  if (candles.length < 3) return null;
+  const c  = candles[candles.length - 1]; // current (just closed)
+  const p  = candles[candles.length - 2]; // previous
+  const pp = candles[candles.length - 3]; // two back
+
+  const body    = Math.abs(c.close - c.open);
+  const range   = c.high - c.low;
+  const upperW  = c.high - Math.max(c.open, c.close);
+  const lowerW  = Math.min(c.open, c.close) - c.low;
+  const isBullC = c.close > c.open;
+  const isBearC = c.close < c.open;
+  const pbody   = Math.abs(p.close - p.open);
+  const isBearP = p.close < p.open;
+  const isBullP = p.close > p.open;
+
+  const patterns = [];
+
+  // Hammer — bullish reversal: small body, long lower wick, tiny upper wick
+  if (lowerW > body * 2 && upperW < body * 0.5 && range > 0) {
+    patterns.push({ name: 'hammer', bias: 'bull', strength: 'moderate' });
+  }
+
+  // Shooting star — bearish reversal: small body, long upper wick, tiny lower wick
+  if (upperW > body * 2 && lowerW < body * 0.5 && range > 0) {
+    patterns.push({ name: 'shooting_star', bias: 'bear', strength: 'moderate' });
+  }
+
+  // Bullish engulfing — current bull candle body engulfs previous bear body
+  if (isBullC && isBearP && c.open < p.close && c.close > p.open && body > pbody) {
+    patterns.push({ name: 'bull_engulfing', bias: 'bull', strength: 'strong' });
+  }
+
+  // Bearish engulfing — current bear candle body engulfs previous bull body
+  if (isBearC && isBullP && c.open > p.close && c.close < p.open && body > pbody) {
+    patterns.push({ name: 'bear_engulfing', bias: 'bear', strength: 'strong' });
+  }
+
+  // Doji — indecision: very small body relative to range
+  if (body < range * 0.1 && range > 0) {
+    patterns.push({ name: 'doji', bias: 'neutral', strength: 'weak' });
+  }
+
+  // Morning star — 3-candle bullish reversal
+  if (isBearP && body < pbody * 0.5 && pp && pp.close < pp.open && isBullC) {
+    patterns.push({ name: 'morning_star', bias: 'bull', strength: 'strong' });
+  }
+
+  // Evening star — 3-candle bearish reversal
+  if (isBullP && body < pbody * 0.5 && pp && pp.close > pp.open && isBearC) {
+    patterns.push({ name: 'evening_star', bias: 'bear', strength: 'strong' });
+  }
+
+  const bullPatterns = patterns.filter(p => p.bias === 'bull');
+  const bearPatterns = patterns.filter(p => p.bias === 'bear');
+  const hasBull = bullPatterns.length > 0;
+  const hasBear = bearPatterns.length > 0;
+  const strongBull = bullPatterns.some(p => p.strength === 'strong');
+  const strongBear = bearPatterns.some(p => p.strength === 'strong');
+
+  return { patterns, hasBull, hasBear, strongBull, strongBear };
+}
+
+// ── INDICATOR 8: SESSION TIMING ───────────────────────────
+// High-volume trading sessions produce more reliable signals.
+// London: 07:00-12:00 UTC | NY: 13:00-20:00 UTC | Asia: 00:00-06:00 UTC
+// Dead zones: 20:00-00:00 UTC and 06:00-07:00 UTC
+function getSessionTiming() {
+  const hour = new Date().getUTCHours();
+  if (hour >= 7  && hour < 12) return { session: 'london',    quality: 'high' };
+  if (hour >= 13 && hour < 20) return { session: 'newyork',   quality: 'high' };
+  if (hour >= 0  && hour < 6)  return { session: 'asia',      quality: 'medium' };
+  if (hour >= 12 && hour < 13) return { session: 'overlap',   quality: 'high' }; // London/NY overlap
+  return { session: 'dead',      quality: 'low' };
+}
+
+// ── INDICATOR 9: SUPPORT & RESISTANCE ────────────────────
+// Identifies key S/R levels from recent swing highs and lows.
+// Entering near support on BUY or resistance on SELL = better RR.
+// Distance from S/R level tells us how much room the trade has.
+function getSupportResistance(candles) {
+  if (candles.length < 50) return null;
+  const recent = candles.slice(-50);
+  const price  = recent[recent.length - 1].close;
+
+  // Collect all swing highs and lows
+  const swingHighs = [], swingLows = [];
+  for (let i = 2; i < recent.length - 2; i++) {
+    const isHigh = recent[i].high > recent[i-1].high && recent[i].high > recent[i-2].high &&
+                   recent[i].high > recent[i+1].high && recent[i].high > recent[i+2].high;
+    const isLow  = recent[i].low  < recent[i-1].low  && recent[i].low  < recent[i-2].low  &&
+                   recent[i].low  < recent[i+1].low  && recent[i].low  < recent[i+2].low;
+    if (isHigh) swingHighs.push(recent[i].high);
+    if (isLow)  swingLows.push(recent[i].low);
+  }
+
+  if (!swingHighs.length || !swingLows.length) return null;
+
+  // Nearest resistance (swing high above price)
+  const resistances = swingHighs.filter(h => h > price).sort((a,b) => a - b);
+  const supports    = swingLows.filter(l => l < price).sort((a,b) => b - a);
+
+  const nearestResistance = resistances[0] || null;
+  const nearestSupport    = supports[0]    || null;
+
+  // Distance as percentage from current price
+  const distToResistance = nearestResistance ? ((nearestResistance - price) / price * 100) : null;
+  const distToSupport    = nearestSupport    ? ((price - nearestSupport)    / price * 100) : null;
+
+  // Near support = within 1% = good BUY entry
+  // Near resistance = within 1% = good SELL entry
+  const nearSupport    = distToSupport    !== null && distToSupport    < 1.5;
+  const nearResistance = distToResistance !== null && distToResistance < 1.5;
+
+  return {
+    nearestResistance, nearestSupport,
+    distToResistance: distToResistance ? +distToResistance.toFixed(2) : null,
+    distToSupport:    distToSupport    ? +distToSupport.toFixed(2)    : null,
+    nearSupport, nearResistance
+  };
+}
+
+// ── INDICATOR 10: TREND AGE ───────────────────────────────
+// Counts how many consecutive candles the current trend has been active.
+// Young trend (< 8 candles) = early = more room. Good for entries.
+// Old trend (> 24 candles) = mature = likely near reversal. Avoid.
+function getTrendAge(closes, trendDir) {
+  if (!closes || closes.length < 10 || !trendDir) return null;
+  let age = 0;
+  const ema9  = (arr) => calcEMA(arr, 9);
+  const ema21 = (arr) => calcEMA(arr, 21);
+
+  for (let i = closes.length - 1; i >= 1; i--) {
+    const slice = closes.slice(0, i + 1);
+    const e9    = ema9(slice);
+    const e21   = ema21(slice);
+    const curDir = e9 > e21 ? 'bull' : 'bear';
+    if (curDir === trendDir) age++;
+    else break;
+  }
+
+  return {
+    age, // candles in current trend
+    young:  age <= 8,           // fresh trend, most room
+    mature: age > 8 && age <= 24, // established
+    old:    age > 24             // extended, reversal risk
+  };
+}
+
 // ══════════════════════════════════════════════════════════
 // SIGNAL LOGIC v4 — BACKTEST-INFORMED
 //
@@ -475,7 +710,9 @@ function getVolatilitySqueeze(candles) {
 //     Break-even at 33% win rate — achievable at all tiers
 // ══════════════════════════════════════════════════════════
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze) {
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price,
+  priceStruct, emaSlope, squeeze,
+  volSurge, rsiDiv, mtfRsi, candlePattern, session, snr, trendAge) {
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
   const trend4hDir = trend4h?.trend || null;
@@ -533,18 +770,69 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       else if (squeeze.releasing && squeeze.breakoutDir === 'bear') score -= 1.0; // firing bearish
     }
 
+    // ── NEW INDICATORS: BUY ───────────────────────────────
+    // Volume surge — institutional participation
+    if (volSurge) {
+      if (volSurge.surge)    score += 1.0;
+      else if (volSurge.elevated) score += 0.5;
+      else if (volSurge.weak)     score -= 0.5;
+    }
+
+    // RSI Divergence — bullish divergence = strong reversal signal
+    if (rsiDiv) {
+      if (rsiDiv.bullDiv) score += 2.0; // most reliable leading signal
+      if (rsiDiv.bearDiv) score -= 1.0; // bearish divergence on BUY = bad
+    }
+
+    // Multi-timeframe RSI — 1H+4H agreement
+    if (mtfRsi) {
+      if (mtfRsi.deeplyBothOversold)  score += 2.0;
+      else if (mtfRsi.bothOversold)   score += 1.0;
+      else if (mtfRsi.bothOverbought) score -= 1.5;
+    }
+
+    // Candle patterns
+    if (candlePattern) {
+      if (candlePattern.strongBull) score += 1.5;
+      else if (candlePattern.hasBull) score += 0.75;
+      if (candlePattern.strongBear) score -= 1.5;
+      else if (candlePattern.hasBear) score -= 0.75;
+    }
+
+    // Session timing
+    if (session) {
+      if (session.quality === 'high')   score += 0.5;
+      else if (session.quality === 'low') score -= 0.5;
+    }
+
+    // Support & Resistance — near support = good BUY entry
+    if (snr) {
+      if (snr.nearSupport)    score += 1.5; // price at support = ideal long entry
+      if (snr.nearResistance) score -= 1.0; // buying into resistance = bad entry
+    }
+
+    // Trend age — young trend has most room
+    if (trendAge && trend1hDir === 'bull') {
+      if (trendAge.young)   score += 0.5;  // fresh uptrend
+      else if (trendAge.old) score -= 1.0; // extended, reversal risk
+    }
+
     score = Math.max(0, Math.min(10, +score.toFixed(1)));
     const conf = score >= 8.0 ? 3 : score >= 6.5 ? 2 : score >= 5.5 ? 1 : 0;
 
     if (conf > 0) {
       const aligned = trend4hDir === 'bull';
-      const structNote = priceStruct ? ` · Structure: ${priceStruct.structure}` : '';
-      const slopeNote  = emaSlope    ? ` · Slope: ${emaSlope.direction}${emaSlope.accelerating?' ↑acc':''}` : '';
-      const sqzNote    = squeeze?.releasing ? ' · Squeeze firing' : squeeze?.squeezed ? ' · Coiling' : '';
-      const trendNote = trend4hDir
-        ? (aligned ? `4H aligned · MACD bullish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`
-                   : `4H counter · MACD bullish · RSI ${rsi} · BB ${bb.pct}% — reduce size${structNote}${slopeNote}`)
-        : `MACD bullish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`;
+      const extras = [
+        priceStruct?.structure === 'bull' ? 'Structure ↑' : '',
+        emaSlope?.accelerating && emaSlope?.direction === 'up' ? 'Slope ↑acc' : '',
+        squeeze?.releasing && squeeze?.breakoutDir === 'bull' ? 'Squeeze ↑' : '',
+        rsiDiv?.bullDiv ? '📈 Bull divergence' : '',
+        mtfRsi?.bothOversold ? 'MTF oversold' : '',
+        candlePattern?.strongBull ? `${candlePattern.patterns.find(p=>p.bias==='bull')?.name}` : '',
+        snr?.nearSupport ? `Near support` : '',
+        trendAge?.young ? 'Young trend' : trendAge?.old ? 'Old trend' : ''
+      ].filter(Boolean).join(' · ');
+      const trendNote = `${trend4hDir ? (aligned ? '4H aligned' : '4H counter — reduce size') : 'No 4H'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras ? ' · ' + extras : ''}`;
       results.push({
         dir:'BUY', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'BUY'  : 'WATCH',
@@ -604,18 +892,56 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       else if (squeeze.releasing && squeeze.breakoutDir === 'bull') score -= 1.0;
     }
 
+    // ── NEW INDICATORS: SELL ──────────────────────────────
+    if (volSurge) {
+      if (volSurge.surge)         score += 1.0;
+      else if (volSurge.elevated) score += 0.5;
+      else if (volSurge.weak)     score -= 0.5;
+    }
+    if (rsiDiv) {
+      if (rsiDiv.bearDiv) score += 2.0;
+      if (rsiDiv.bullDiv) score -= 1.0;
+    }
+    if (mtfRsi) {
+      if (mtfRsi.deeplyBothOverbought)  score += 2.0;
+      else if (mtfRsi.bothOverbought)   score += 1.0;
+      else if (mtfRsi.bothOversold)     score -= 1.5;
+    }
+    if (candlePattern) {
+      if (candlePattern.strongBear) score += 1.5;
+      else if (candlePattern.hasBear) score += 0.75;
+      if (candlePattern.strongBull) score -= 1.5;
+      else if (candlePattern.hasBull) score -= 0.75;
+    }
+    if (session) {
+      if (session.quality === 'high')   score += 0.5;
+      else if (session.quality === 'low') score -= 0.5;
+    }
+    if (snr) {
+      if (snr.nearResistance) score += 1.5; // shorting at resistance = ideal
+      if (snr.nearSupport)    score -= 1.0; // shorting into support = bad
+    }
+    if (trendAge && trend1hDir === 'bear') {
+      if (trendAge.young)    score += 0.5;
+      else if (trendAge.old) score -= 1.0;
+    }
+
     score = Math.max(0, Math.min(10, +score.toFixed(1)));
     const conf = score >= 8.0 ? 3 : score >= 6.5 ? 2 : score >= 5.5 ? 1 : 0;
 
     if (conf > 0) {
       const aligned = trend4hDir === 'bear';
-      const structNote = priceStruct ? ` · Structure: ${priceStruct.structure}` : '';
-      const slopeNote  = emaSlope    ? ` · Slope: ${emaSlope.direction}${emaSlope.accelerating?' ↑acc':''}` : '';
-      const sqzNote    = squeeze?.releasing ? ' · Squeeze firing' : squeeze?.squeezed ? ' · Coiling' : '';
-      const trendNote = trend4hDir
-        ? (aligned ? `4H aligned · MACD bearish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`
-                   : `4H counter · MACD bearish · RSI ${rsi} · BB ${bb.pct}% — reduce size${structNote}${slopeNote}`)
-        : `MACD bearish · RSI ${rsi} · BB ${bb.pct}%${structNote}${slopeNote}${sqzNote}`;
+      const extras = [
+        priceStruct?.structure === 'bear' ? 'Structure ↓' : '',
+        emaSlope?.accelerating && emaSlope?.direction === 'down' ? 'Slope ↓acc' : '',
+        squeeze?.releasing && squeeze?.breakoutDir === 'bear' ? 'Squeeze ↓' : '',
+        rsiDiv?.bearDiv ? '📉 Bear divergence' : '',
+        mtfRsi?.bothOverbought ? 'MTF overbought' : '',
+        candlePattern?.strongBear ? `${candlePattern.patterns.find(p=>p.bias==='bear')?.name}` : '',
+        snr?.nearResistance ? 'Near resistance' : '',
+        trendAge?.young ? 'Young trend' : trendAge?.old ? 'Old trend' : ''
+      ].filter(Boolean).join(' · ');
+      const trendNote = `${trend4hDir ? (aligned ? '4H aligned' : '4H counter — reduce size') : 'No 4H'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras ? ' · ' + extras : ''}`;
       results.push({
         dir:'SELL', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'SELL' : 'WATCH',
@@ -649,18 +975,33 @@ async function processPair(pair) {
   const vol      = (lastC.volume||0)*price;
   const mcap     = pair.mcap||0;
   const volRatio = mcap>0 ? vol/mcap : 0;
-  // Calculate three new leading indicators
+  // Original leading indicators
   const priceStruct = getPriceStructure(candles1h);
   const emaSlope    = getEMASlope(closes1h);
   const squeeze     = getVolatilitySqueeze(candles1h);
 
-  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze);
+  // New indicators
+  const volSurge      = getVolumeSurge(candles1h);
+  const rsiSeries     = calcRSISeries(closes1h, 14);
+  const rsiDiv        = getRSIDivergence(candles1h, rsiSeries);
+  const mtfRsi        = getMTFRSI(closes1h, closes4h);
+  const candlePattern = getCandlePattern(candles1h);
+  const session       = getSessionTiming();
+  const snr           = getSupportResistance(candles1h);
+  const trendAge      = getTrendAge(closes1h, trend1h?.trend);
+
+  const signals = getSignals(
+    rsi, macd, bb, volRatio, trend1h, trend4h, atr, price,
+    priceStruct, emaSlope, squeeze,
+    volSurge, rsiDiv, mtfRsi, candlePattern, session, snr, trendAge
+  );
   const topSig   = signals[0];
   console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pct}% 1H=${trend1h?.trend||'?'} 4H=${trend4h?.trend||'?'} → ${topSig?topSig.dir+' '+topSig.score+' ★'.repeat(topSig.conf):'HOLD'}`);
   return {
     sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h,
     priceStruct, emaSlope, squeeze,
+    volSurge, rsiDiv, mtfRsi, candlePattern, session, snr, trendAge,
     score:    topSig?.score    || 5,
     swing:    topSig?.swing    || 'HOLD',
     scalp:    topSig?.scalp    || 'HOLD',
@@ -832,10 +1173,19 @@ async function runBacktest() {
         const t1h  = getTrend(c1h, 9, 21);
         const t4h  = getTrend(c4h, 20, 50);
         const price = w1h[w1h.length-1].close;
-        const ps  = getPriceStructure(w1h);
-        const es  = getEMASlope(c1h);
-        const sq  = getVolatilitySqueeze(w1h);
-        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price, ps, es, sq);
+        const ps   = getPriceStructure(w1h);
+        const es   = getEMASlope(c1h);
+        const sq   = getVolatilitySqueeze(w1h);
+        const vs   = getVolumeSurge(w1h);
+        const rsiS = calcRSISeries(c1h, 14);
+        const rd   = getRSIDivergence(w1h, rsiS);
+        const mtr  = getMTFRSI(c1h, c4h);
+        const cp   = getCandlePattern(w1h);
+        const sess = getSessionTiming();
+        const snrB = getSupportResistance(w1h);
+        const ta   = getTrendAge(c1h, t1h?.trend);
+        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price,
+          ps, es, sq, vs, rd, mtr, cp, sess, snrB, ta);
         if (!sigs.length) continue;
         const sig = sigs[0];
         const outcome = checkOutcome(candles, idx, sig);
