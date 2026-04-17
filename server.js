@@ -540,26 +540,55 @@ function addToHistory(results) {
   const now = Date.now();
   const nearClose = isNearCandleClose();
   signalHistory = signalHistory.filter(h=>(now-h.ts)<HISTORY_TTL);
+
   results.forEach(s => {
     if (!s.signals) return;
     s.signals.forEach(sig => {
-      const isDupe = signalHistory.some(h=>h.sym===s.sym&&h.dir===sig.dir&&(now-h.ts)<5*60*1000);
-      if (!isDupe) {
-        signalHistory.push({
-          sym:s.sym, price:s.price, dir:sig.dir, score:sig.score,
-          conf:sig.conf, sl:sig.sl, tp1:sig.tp1, tp2:sig.tp2,
-          swing:sig.swing, scalp:sig.scalp, aligned:sig.aligned,
-          trendNote:sig.trendNote, rsi:s.rsi, atr:s.atr,
-          ts:now, timeStr:new Date(now).toUTCString().slice(17,25),
-          confirmedAtClose: nearClose
-        });
-        if (sig.conf===3 && nearClose) {
-          addSignalToLog(s,sig);
-          sendTelegram(formatTGSignal(s,sig));
-          console.log(`🔔 CONFIRMED: ${sig.dir} ${s.sym} ${sig.score}/10 ★★★`);
-        } else if (sig.conf===3 && !nearClose) {
-          console.log(`⏳ ${sig.dir} ${s.sym} ${sig.score}/10 ★★★ — waiting for candle close (${minutesToCandleClose()}m)`);
+
+      // ── SMART DEDUP — ATR-based price distance check ──
+      // Find the most recent signal for this pair + direction
+      const lastSig = signalHistory
+        .filter(h => h.sym === s.sym && h.dir === sig.dir)
+        .sort((a, b) => b.ts - a.ts)[0];
+
+      if (lastSig) {
+        const priceDiff = Math.abs(s.price - lastSig.price);
+        const atr = s.atr || s.price * 0.02;
+
+        // Block if price hasn't moved at least 1x ATR from last signal
+        // This means near-identical entries are treated as the same signal
+        if (priceDiff < atr) {
+          // Update the existing signal's score and trend note if improved
+          // so the panel always shows the most current reading
+          if (sig.score > lastSig.score) {
+            lastSig.score    = sig.score;
+            lastSig.conf     = sig.conf;
+            lastSig.trendNote= sig.trendNote;
+            lastSig.sl       = sig.sl;
+            lastSig.tp1      = sig.tp1;
+            lastSig.tp2      = sig.tp2;
+          }
+          console.log(`↺ ${sig.dir} ${s.sym} price diff ${priceDiff.toFixed(4)} < ATR ${atr.toFixed(4)} — updating existing signal`);
+          return; // don't fire new signal
         }
+      }
+
+      // Price has moved significantly — this is a genuine new entry level
+      signalHistory.push({
+        sym:s.sym, price:s.price, dir:sig.dir, score:sig.score,
+        conf:sig.conf, sl:sig.sl, tp1:sig.tp1, tp2:sig.tp2,
+        swing:sig.swing, scalp:sig.scalp, aligned:sig.aligned,
+        trendNote:sig.trendNote, rsi:s.rsi, atr:s.atr,
+        ts:now, timeStr:new Date(now).toUTCString().slice(17,25),
+        confirmedAtClose: nearClose
+      });
+
+      if (sig.conf===3 && nearClose) {
+        addSignalToLog(s, sig);
+        sendTelegram(formatTGSignal(s, sig));
+        console.log(`🔔 CONFIRMED: ${sig.dir} ${s.sym} ${sig.score}/10 ★★★`);
+      } else if (sig.conf===3 && !nearClose) {
+        console.log(`⏳ ${sig.dir} ${s.sym} ${sig.score}/10 ★★★ — waiting for candle close (${minutesToCandleClose()}m)`);
       }
     });
   });
