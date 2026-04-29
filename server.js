@@ -55,6 +55,10 @@ function leverageFromScore(score, conf) {
 
 function formatTGSignal(s, sig) {
   const e = sig.dir === 'BUY' ? '🟢' : '🔴';
+  const minsLeft = minutesToCandleClose();
+  const closeNote = minsLeft <= 5
+    ? '⚡ Candle closing now — enter at open of next candle'
+    : `⏱ Candle closes in ~${minsLeft}m — wait for close before entering`;
   return `${e} <b>${sig.dir} ${s.sym}/USDT</b>
 ${'⭐'.repeat(sig.conf)} Score: <b>${sig.score}/10</b>
 
@@ -65,6 +69,8 @@ ${'⭐'.repeat(sig.conf)} Score: <b>${sig.score}/10</b>
 ⚡ Leverage: <b>${leverageFromScore(sig.score, sig.conf)}</b>
 
 ${sig.trendNote}
+
+${closeNote}
 🤖 Defi Insider Signal Bot`;
 }
 
@@ -583,12 +589,10 @@ function addToHistory(results) {
         confirmedAtClose: nearClose
       });
 
-      if (sig.conf===3 && nearClose) {
+      if (sig.conf===3) {
         addSignalToLog(s, sig);
         sendTelegram(formatTGSignal(s, sig));
-        console.log(`🔔 CONFIRMED: ${sig.dir} ${s.sym} ${sig.score}/10 ★★★`);
-      } else if (sig.conf===3 && !nearClose) {
-        console.log(`⏳ ${sig.dir} ${s.sym} ${sig.score}/10 ★★★ — waiting for candle close (${minutesToCandleClose()}m)`);
+        console.log(`🔔 SIGNAL SENT: ${sig.dir} ${s.sym} ${sig.score}/10 ★★★ (${minutesToCandleClose()}m to candle close)`);
       }
     });
   });
