@@ -780,21 +780,83 @@ async function runBacktest() {
       expired:sigs.filter(s=>s.result==='expired').length, resolved,
       winRate:resolved>0?Math.round(wins.length/resolved*100):null,
       avgWinH:wins.length>0?+(wins.reduce((s,x)=>s+x.hours,0)/wins.length).toFixed(1):null,
-      avgLossH:losses.length>0?+(losses.reduce((s,x)=>s+x.hours,0)/losses.length).toFixed(1):null };
+      avgLossH:losses.length>0?+(losses.reduce((s,x)=>s+x.hours,0)/losses.length).toFixed(1):null,
+      expectancy:resolved>0?+((wins.length/resolved*2.0)-(losses.length/resolved*1.0)).toFixed(3):null };
   }
 
+  // ── OPTIMAL 4-RULE FILTER (applied to backtest) ──────────
+  // Same rules used for live Telegram gate — lets us validate
+  // the 83.3% simulation result against the full 83-day dataset.
+  // Rule 1: Score >= 9.0
+  // Rule 2: Slope confirmed in signal direction
+  // Rule 3: SELL RSI > 35 (no shorting into oversold)
+  // Rule 4: Structure AND Squeeze both confirmed simultaneously
+  function passesOptimalFilter(sig) {
+    const note = sig.trendNote || '';
+    const rule1 = sig.score >= 9.0;
+    const rule2 = sig.dir === 'BUY'
+      ? note.includes('Slope ↑')
+      : note.includes('Slope ↓');
+    const rule3 = sig.dir === 'BUY' ? true : (sig.rsi || 50) > 35;
+    const hasStruct = sig.dir === 'BUY'
+      ? note.includes('Structure ↑')
+      : note.includes('Structure ↓');
+    const hasSqueeze = sig.dir === 'BUY'
+      ? note.includes('Squeeze ↑')
+      : note.includes('Squeeze ↓');
+    const rule4 = hasStruct && hasSqueeze;
+    return rule1 && rule2 && rule3 && rule4;
+  }
+
+  const filteredResults = allResults.filter(passesOptimalFilter);
+  const unfilteredStar3 = allResults.filter(s=>s.conf===3);
+
   backtestResults = {
+    // ── UNFILTERED (all signals, existing view) ──────────
     overall:  stats(allResults),
-    byStars:  { 3:stats(allResults.filter(s=>s.conf===3)), 2:stats(allResults.filter(s=>s.conf===2)), 1:stats(allResults.filter(s=>s.conf===1)) },
+    byStars:  {
+      3: stats(unfilteredStar3),
+      2: stats(allResults.filter(s=>s.conf===2)),
+      1: stats(allResults.filter(s=>s.conf===1))
+    },
     byPair:   Object.fromEntries(PAIRS.map(p=>[p.sym, stats(allResults.filter(s=>s.sym===p.sym))])),
     byDir:    { BUY:stats(allResults.filter(s=>s.dir==='BUY')), SELL:stats(allResults.filter(s=>s.dir==='SELL')) },
     totalSignals: allResults.length, daysBack:83,
     ranAt: new Date().toISOString(),
-    recentSignals: allResults.slice(-50).reverse()
+    recentSignals: allResults.slice(-50).reverse(),
+
+    // ── OPTIMAL FILTER RESULTS (83-day validation) ───────
+    // This is the key section — how does the 4-rule filter
+    // perform across the full 83-day backtest dataset?
+    optimalFilter: {
+      signals:      stats(filteredResults),
+      byDir:        { BUY:stats(filteredResults.filter(s=>s.dir==='BUY')), SELL:stats(filteredResults.filter(s=>s.dir==='SELL')) },
+      byPair:       Object.fromEntries(PAIRS.map(p=>[p.sym, stats(filteredResults.filter(s=>s.sym===p.sym))])),
+      totalFiltered: filteredResults.length,
+      totalUnfiltered: unfilteredStar3.length,
+      reductionPct: unfilteredStar3.length > 0
+        ? Math.round((1 - filteredResults.length/unfilteredStar3.length)*100)
+        : 0,
+      // Rule-by-rule breakdown — how many signals each rule blocks
+      ruleBreakdown: {
+        rule1_score_9:    { blocked: unfilteredStar3.filter(s=>s.score < 9.0).length },
+        rule2_slope:      { blocked: unfilteredStar3.filter(s=>!(s.dir==='BUY'?( s.trendNote||'').includes('Slope ↑'):(s.trendNote||'').includes('Slope ↓'))).length },
+        rule3_sell_rsi:   { blocked: unfilteredStar3.filter(s=>s.dir==='SELL'&&(s.rsi||50)<=35).length },
+        rule4_struct_sqz: { blocked: unfilteredStar3.filter(s=>{
+          const n=s.trendNote||'';
+          const hasS=s.dir==='BUY'?n.includes('Structure ↑'):n.includes('Structure ↓');
+          const hasQ=s.dir==='BUY'?n.includes('Squeeze ↑'):n.includes('Squeeze ↓');
+          return !(hasS&&hasQ);
+        }).length }
+      },
+      recentFiltered: filteredResults.slice(-20).reverse()
+    }
   };
 
-  console.log(`✅ Backtest done: ${allResults.length} signals`);
-  console.log(`★★★ ${backtestResults.byStars[3].winRate}% (${backtestResults.byStars[3].wins}W/${backtestResults.byStars[3].losses}L) | ★★ ${backtestResults.byStars[2].winRate}% | ★ ${backtestResults.byStars[1].winRate}%`);
+  console.log('✅ Backtest done: ' + allResults.length + ' total signals');
+  console.log('★★★ unfiltered: ' + backtestResults.byStars[3].winRate + '% (' + backtestResults.byStars[3].wins + 'W/' + backtestResults.byStars[3].losses + 'L)');
+  console.log('★★★ OPTIMAL FILTER: ' + backtestResults.optimalFilter.signals.winRate + '% (' + backtestResults.optimalFilter.signals.wins + 'W/' + backtestResults.optimalFilter.signals.losses + 'L) from ' + filteredResults.length + ' signals');
+  console.log('Signal reduction: ' + backtestResults.optimalFilter.reductionPct + '% fewer signals sent to Telegram');
   backtestRunning = false;
 }
 
