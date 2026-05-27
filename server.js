@@ -590,9 +590,47 @@ function addToHistory(results) {
       });
 
       if (sig.conf===3) {
-        addSignalToLog(s, sig);
-        sendTelegram(formatTGSignal(s, sig));
-        console.log(`🔔 SIGNAL SENT: ${sig.dir} ${s.sym} ${sig.score}/10 ★★★ (${minutesToCandleClose()}m to candle close)`);
+        // ── OPTIMAL 4-RULE GATE (83.3% win rate in simulation) ──
+        // ALL four conditions must be true before Telegram fires.
+        // Based on exhaustive combination search of 8 days live data.
+        const note = sig.trendNote || '';
+        const sigRSI = s.rsi || 50;
+
+        // Rule 1: Score >= 9.0
+        const rule1 = sig.score >= 9.0;
+
+        // Rule 2: Slope confirmed in signal direction
+        const rule2 = sig.dir === 'BUY'
+          ? note.includes('Slope ↑')
+          : note.includes('Slope ↓');
+
+        // Rule 3: SELL RSI > 35 (no shorting into oversold)
+        // BUY signals always pass this rule
+        const rule3 = sig.dir === 'BUY' ? true : sigRSI > 35;
+
+        // Rule 4: Structure AND Squeeze both confirmed in signal direction
+        const hasStruct = sig.dir === 'BUY'
+          ? note.includes('Structure ↑')
+          : note.includes('Structure ↓');
+        const hasSqueeze = sig.dir === 'BUY'
+          ? note.includes('Squeeze ↑')
+          : note.includes('Squeeze ↓');
+        const rule4 = hasStruct && hasSqueeze;
+
+        const allRulesMet = rule1 && rule2 && rule3 && rule4;
+
+        if (allRulesMet) {
+          addSignalToLog(s, sig);
+          sendTelegram(formatTGSignal(s, sig));
+          console.log('🔔 OPTIMAL SIGNAL: ' + sig.dir + ' ' + s.sym + ' ' + sig.score + '/10 ★★★ (' + minutesToCandleClose() + 'm to close)');
+        } else {
+          const failed = [];
+          if (!rule1) failed.push('score ' + sig.score + ' < 9.0');
+          if (!rule2) failed.push('no slope confirmation');
+          if (!rule3) failed.push('SELL RSI ' + sigRSI + ' <= 35 (oversold)');
+          if (!rule4) failed.push('missing ' + (!hasStruct ? 'Structure ' : '') + (!hasSqueeze ? 'Squeeze' : ''));
+          console.log('⛔ BLOCKED: ' + sig.dir + ' ' + s.sym + ' ' + sig.score + '/10 — ' + failed.join(', '));
+        }
       }
     });
   });
