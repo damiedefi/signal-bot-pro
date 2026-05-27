@@ -481,6 +481,222 @@ function getFearGreedModifier(fg, dir) {
   return { mod, label };
 }
 
+// ── BYBIT LONG/SHORT RATIO ───────────────────────────────
+// Measures what % of traders are long vs short right now
+// >70% long = market too bullish = contrarian SELL signal
+// <30% long = market too bearish = contrarian BUY signal
+// Aggregated across all Bybit users on that pair
+
+const lsCache = {};
+const LS_TTL = 5 * 60 * 1000;
+
+async function getLongShortRatio(sym) {
+  if (lsCache[sym] && (Date.now() - lsCache[sym].ts) < LS_TTL) {
+    return lsCache[sym].data;
+  }
+  const bybitSym = BYBIT_SYMBOLS[sym];
+  if (!bybitSym) return null;
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const url = `https://api.bybit.com/v5/market/account-ratio?category=linear&symbol=${bybitSym}&period=1h&limit=1`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('LS HTTP ' + res.status);
+    const json = await res.json();
+    const item = json?.result?.list?.[0];
+    if (!item) throw new Error('No LS data');
+    const longPct  = parseFloat(item.buyRatio) * 100;
+    const shortPct = parseFloat(item.sellRatio) * 100;
+    const data = {
+      longPct: +longPct.toFixed(1),
+      shortPct: +shortPct.toFixed(1),
+      crowdedLong:  longPct >= 65,  // too many longs = bearish contrarian
+      crowdedShort: longPct <= 35,  // too many shorts = bullish contrarian
+      neutral:      longPct > 35 && longPct < 65
+    };
+    lsCache[sym] = { data, ts: Date.now() };
+    return data;
+  } catch(e) {
+    console.log('LS ' + sym + ': ' + e.message);
+    return lsCache[sym]?.data || null;
+  }
+}
+
+function getLSModifier(ls, dir) {
+  if (!ls) return { mod: 0, label: '' };
+  let mod = 0, label = '';
+  if (dir === 'BUY') {
+    if (ls.crowdedShort) { mod = +1.5; label = '🟢 ' + ls.longPct + '% long — crowd too short (contrarian BUY)'; }
+    else if (ls.crowdedLong) { mod = -1.5; label = '🔴 ' + ls.longPct + '% long — crowd too long (fade the crowd)'; }
+    else { label = '⚪ L/S ratio neutral (' + ls.longPct + '% long)'; }
+  } else {
+    if (ls.crowdedLong) { mod = +1.5; label = '🟢 ' + ls.longPct + '% long — crowd too long (contrarian SELL)'; }
+    else if (ls.crowdedShort) { mod = -1.5; label = '🔴 ' + ls.longPct + '% long — crowd too short (fade the crowd)'; }
+    else { label = '⚪ L/S ratio neutral (' + ls.longPct + '% long)'; }
+  }
+  return { mod, label };
+}
+
+// ── BYBIT FUNDING RATE HISTORY ────────────────────────────
+// Historical funding rates — unlocks backtesting of funding layer
+// Bybit settles funding every 8 hours → limit=300 = ~100 days history
+// Used to calculate average funding trend over last 3 periods
+
+const fundingHistCache = {};
+const FH_TTL = 30 * 60 * 1000; // cache 30 mins
+
+async function getFundingHistory(sym) {
+  if (fundingHistCache[sym] && (Date.now() - fundingHistCache[sym].ts) < FH_TTL) {
+    return fundingHistCache[sym].data;
+  }
+  const bybitSym = BYBIT_SYMBOLS[sym];
+  if (!bybitSym) return null;
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const url = `https://api.bybit.com/v5/market/funding/history?category=linear&symbol=${bybitSym}&limit=10`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('FH HTTP ' + res.status);
+    const json = await res.json();
+    const list = json?.result?.list;
+    if (!list || list.length < 3) throw new Error('Insufficient FH data');
+    const rates = list.map(i => parseFloat(i.fundingRate));
+    const avg3  = rates.slice(0, 3).reduce((a,b) => a+b, 0) / 3;
+    const trend = rates[0] > rates[2] ? 'rising' : rates[0] < rates[2] ? 'falling' : 'flat';
+    const data  = { current: rates[0], avg3, trend, history: rates.slice(0, 6) };
+    fundingHistCache[sym] = { data, ts: Date.now() };
+    return data;
+  } catch(e) {
+    console.log('FH ' + sym + ': ' + e.message);
+    return fundingHistCache[sym]?.data || null;
+  }
+}
+
+// ── BYBIT ORDER BOOK IMBALANCE ────────────────────────────
+// Ratio of bid volume to ask volume in top 25 levels
+// Heavy bid side = institutional buy wall below = BUY support
+// Heavy ask side = sell wall above = resistance for BUY, support for SELL
+
+const obCache = {};
+const OB_TTL = 60 * 1000; // cache 1 minute — orderbook changes fast
+
+async function getOrderBookImbalance(sym) {
+  if (obCache[sym] && (Date.now() - obCache[sym].ts) < OB_TTL) {
+    return obCache[sym].data;
+  }
+  const bybitSym = BYBIT_SYMBOLS[sym];
+  if (!bybitSym) return null;
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const url = `https://api.bybit.com/v5/market/orderbook?category=linear&symbol=${bybitSym}&limit=25`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('OB HTTP ' + res.status);
+    const json = await res.json();
+    const bids = json?.result?.b || [];
+    const asks = json?.result?.a || [];
+    if (!bids.length || !asks.length) throw new Error('No OB data');
+    const bidVol = bids.reduce((s, b) => s + parseFloat(b[1]), 0);
+    const askVol = asks.reduce((s, a) => s + parseFloat(a[1]), 0);
+    const total  = bidVol + askVol;
+    const ratio  = total > 0 ? bidVol / total : 0.5; // >0.5 = more bids
+    const data   = {
+      bidVol: +bidVol.toFixed(2),
+      askVol: +askVol.toFixed(2),
+      ratio:  +ratio.toFixed(3),
+      bidHeavy: ratio >= 0.60,  // strong buy wall
+      askHeavy: ratio <= 0.40,  // strong sell wall
+      balanced: ratio > 0.40 && ratio < 0.60
+    };
+    obCache[sym] = { data, ts: Date.now() };
+    return data;
+  } catch(e) {
+    console.log('OB ' + sym + ': ' + e.message);
+    return obCache[sym]?.data || null;
+  }
+}
+
+function getOBModifier(ob, dir) {
+  if (!ob) return { mod: 0, label: '' };
+  let mod = 0, label = '';
+  const pct = Math.round(ob.ratio * 100);
+  if (dir === 'BUY') {
+    if (ob.bidHeavy) { mod = +1.0; label = '📗 Order book ' + pct + '% bids — buy wall support'; }
+    else if (ob.askHeavy) { mod = -1.0; label = '📕 Order book ' + pct + '% asks — sell wall resistance'; }
+    else { label = '📒 Order book balanced (' + pct + '% bids)'; }
+  } else {
+    if (ob.askHeavy) { mod = +1.0; label = '📕 Order book ' + pct + '% asks — sell wall confirmed'; }
+    else if (ob.bidHeavy) { mod = -1.0; label = '📗 Order book ' + pct + '% bids — buy wall resistance for short'; }
+    else { label = '📒 Order book balanced (' + pct + '% bids)'; }
+  }
+  return { mod, label };
+}
+
+// ── BYBIT TAKER BUY/SELL VOLUME ───────────────────────────
+// Measures whether buyers or sellers are MORE aggressive
+// Taker buys = market orders hitting the ask = bullish aggression
+// Taker sells = market orders hitting the bid = bearish aggression
+// More meaningful than raw volume — shows WHO is driving price
+
+const takerCache = {};
+const TAKER_TTL = 60 * 1000;
+
+async function getTakerVolume(sym) {
+  if (takerCache[sym] && (Date.now() - takerCache[sym].ts) < TAKER_TTL) {
+    return takerCache[sym].data;
+  }
+  const bybitSym = BYBIT_SYMBOLS[sym];
+  if (!bybitSym) return null;
+  try {
+    const { default: fetch } = await import('node-fetch');
+    // Bybit kline returns: open, high, low, close, volume, turnover
+    // We fetch last 3 candles and look at volume trend
+    const url = `https://api.bybit.com/v5/market/kline?category=linear&symbol=${bybitSym}&interval=60&limit=3`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('TV HTTP ' + res.status);
+    const json = await res.json();
+    const list = json?.result?.list;
+    if (!list || list.length < 2) throw new Error('No taker data');
+    // list[0] = most recent candle: [time, open, high, low, close, volume, turnover]
+    const currentVol  = parseFloat(list[0][5]);
+    const previousVol = parseFloat(list[1][5]);
+    const currentClose  = parseFloat(list[0][4]);
+    const currentOpen   = parseFloat(list[0][1]);
+    const prevClose     = parseFloat(list[1][4]);
+    const prevOpen      = parseFloat(list[1][1]);
+    // Estimate taker direction from candle body
+    const bullCandle = currentClose > currentOpen;
+    const volSurge   = currentVol > previousVol * 1.5;
+    const volDry     = currentVol < previousVol * 0.5;
+    const data = {
+      currentVol, previousVol,
+      bullCandle, volSurge, volDry,
+      ratio: +(currentVol / (previousVol || 1)).toFixed(2),
+      buyersDominating:  bullCandle && volSurge,
+      sellersDominating: !bullCandle && volSurge
+    };
+    takerCache[sym] = { data, ts: Date.now() };
+    return data;
+  } catch(e) {
+    console.log('Taker ' + sym + ': ' + e.message);
+    return takerCache[sym]?.data || null;
+  }
+}
+
+function getTakerModifier(taker, dir) {
+  if (!taker) return { mod: 0, label: '' };
+  let mod = 0, label = '';
+  if (dir === 'BUY') {
+    if (taker.buyersDominating)  { mod = +1.0; label = '💚 Buyers dominating — aggressive buy volume'; }
+    else if (taker.sellersDominating) { mod = -1.0; label = '🔴 Sellers dominating — aggressive sell volume'; }
+    else if (taker.volDry)       { mod = -0.5; label = '🌵 Volume drying up'; }
+    else                         { label = '⚪ Volume neutral'; }
+  } else {
+    if (taker.sellersDominating) { mod = +1.0; label = '💚 Sellers dominating — aggressive sell volume'; }
+    else if (taker.buyersDominating) { mod = -1.0; label = '🔴 Buyers dominating — aggressive buy volume'; }
+    else if (taker.volDry)       { mod = -0.5; label = '🌵 Volume drying up'; }
+    else                         { label = '⚪ Volume neutral'; }
+  }
+  return { mod, label };
+}
+
 // ── INDICATORS ────────────────────────────────────────────
 function calcRSI(closes, p=14) {
   if (closes.length < p+1) return 50;
@@ -578,7 +794,7 @@ function getVolatilitySqueeze(candles) {
 // squeeze = additional context. TP1=3x ATR, TP2=5x ATR.
 // ══════════════════════════════════════════════════════════
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0) {
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0, ls=null, ob=null, taker=null) {
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
   const trend4hDir = trend4h?.trend || null;
@@ -630,7 +846,10 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       const fundingNoteB = getFundingModifier(fundingRate, 'BUY').label;
       const oiNoteB     = getOIModifier(oi, 'BUY', pct24h).label;
       const fgNoteB     = getFearGreedModifier(fg, 'BUY').label;
-      const extraData   = [fundingNoteB, oiNoteB, fgNoteB].filter(Boolean).join(' · ');
+      const lsNoteB     = getLSModifier(ls, 'BUY').label;
+      const obNoteB     = getOBModifier(ob, 'BUY').label;
+      const tkNoteB     = getTakerModifier(taker, 'BUY').label;
+      const extraData   = [fundingNoteB, oiNoteB, fgNoteB, lsNoteB, obNoteB, tkNoteB].filter(Boolean).join(' · ');
       const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraData}`;
       results.push({
         dir:'BUY', score, conf, aligned, trendNote,
@@ -689,7 +908,10 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       const fundingNoteS = getFundingModifier(fundingRate, 'SELL').label;
       const oiNoteS     = getOIModifier(oi, 'SELL', pct24h).label;
       const fgNoteS     = getFearGreedModifier(fg, 'SELL').label;
-      const extraDataS  = [fundingNoteS, oiNoteS, fgNoteS].filter(Boolean).join(' · ');
+      const lsNoteS     = getLSModifier(ls, 'SELL').label;
+      const obNoteS     = getOBModifier(ob, 'SELL').label;
+      const tkNoteS     = getTakerModifier(taker, 'SELL').label;
+      const extraDataS  = [fundingNoteS, oiNoteS, fgNoteS, lsNoteS, obNoteS, tkNoteS].filter(Boolean).join(' · ');
       const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraDataS}`;
       results.push({
         dir:'SELL', score, conf, aligned, trendNote,
@@ -732,13 +954,16 @@ async function processPair(pair) {
   const fundingRate  = await getFundingRate(pair.sym);
   const funding      = getFundingModifier(fundingRate, 'BUY'); // direction applied per signal below
 
-  // Fetch Open Interest and Fear & Greed (in parallel for speed)
-  const [oi, fg] = await Promise.all([
+  // Fetch all non-price data in parallel (no extra scan time)
+  const [oi, fg, ls, ob, taker] = await Promise.all([
     getOpenInterest(pair.sym),
-    getFearGreed()
+    getFearGreed(),
+    getLongShortRatio(pair.sym),
+    getOrderBookImbalance(pair.sym),
+    getTakerVolume(pair.sym)
   ]);
 
-  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h);
+  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h, ls, ob, taker);
   const topSig   = signals[0];
 
   const fundingInfo = topSig ? getFundingModifier(fundingRate, topSig.dir) : funding;
@@ -748,7 +973,7 @@ async function processPair(pair) {
     sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h, priceStruct, emaSlope, squeeze,
     fundingRate, fundingLabel: fundingInfo.label,
-    oi, fg,
+    oi, fg, ls, ob, taker,
     score:    topSig?.score    || 5,
     swing:    topSig?.swing    || 'HOLD',
     scalp:    topSig?.scalp    || 'HOLD',
