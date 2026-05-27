@@ -284,6 +284,79 @@ async function getCandles(sym) {
   throw new Error(`${sym}: all sources failed`);
 }
 
+// ── BYBIT FUNDING RATE ───────────────────────────────────
+// Bybit public API — no auth, no geo-blocking on Railway
+// Funding rate = market positioning signal (non-price data)
+// Positive = crowded longs = bearish lean
+// Negative = crowded shorts = bullish lean
+
+const BYBIT_SYMBOLS = {
+  BTC:'BTCUSDT', ETH:'ETHUSDT', BNB:'BNBUSDT', SOL:'SOLUSDT',
+  DOGE:'DOGEUSDT', AVAX:'AVAXUSDT', XRP:'XRPUSDT', NEAR:'NEARUSDT',
+  UNI:'UNIUSDT', INJ:'INJUSDT', SUI:'SUIUSDT', TAO:'TAOUSDT'
+};
+
+const fundingCache = {};
+const FUNDING_TTL = 5 * 60 * 1000; // cache 5 minutes
+
+async function getFundingRate(sym) {
+  // Return cached value if fresh
+  if (fundingCache[sym] && (Date.now() - fundingCache[sym].ts) < FUNDING_TTL) {
+    return fundingCache[sym].rate;
+  }
+
+  const bybitSym = BYBIT_SYMBOLS[sym];
+  if (!bybitSym) return 0;
+
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const url = `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${bybitSym}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' }, timeout: 5000 });
+    if (!res.ok) throw new Error('Bybit HTTP ' + res.status);
+    const json = await res.json();
+    const ticker = json?.result?.list?.[0];
+    if (!ticker) throw new Error('No ticker data');
+    const rate = parseFloat(ticker.fundingRate || 0);
+    fundingCache[sym] = { rate, ts: Date.now() };
+    return rate;
+  } catch(e) {
+    console.log('Funding ' + sym + ': ' + e.message + ' (using 0)');
+    return fundingCache[sym]?.rate || 0; // use last known or neutral
+  }
+}
+
+// Funding rate scoring modifier
+// Returns score adjustment and a label for the signal card
+function getFundingModifier(fundingRate, dir) {
+  const f = fundingRate;
+  let mod = 0;
+  let label = '';
+
+  if (dir === 'BUY') {
+    // Positive funding = longs crowded = bad for BUY
+    // Negative funding = shorts crowded = good for BUY (squeeze potential)
+    if      (f <= -0.10) { mod = +2.0; label = '🟢 Extreme short squeeze setup'; }
+    else if (f <= -0.05) { mod = +1.5; label = '🟢 Crowded shorts — bullish lean'; }
+    else if (f <= -0.01) { mod = +0.5; label = '🟡 Mild negative funding'; }
+    else if (f >=  0.10) { mod = -2.0; label = '🔴 Extreme crowded longs — danger'; }
+    else if (f >=  0.05) { mod = -1.5; label = '🔴 Crowded longs — bearish lean'; }
+    else if (f >=  0.01) { mod = -0.5; label = '🟡 Mild positive funding'; }
+    else                  { label = '⚪ Neutral funding'; }
+  } else {
+    // SELL: positive funding = longs crowded = good for SELL
+    // SELL: negative funding = shorts crowded = bad for SELL
+    if      (f >=  0.10) { mod = +2.0; label = '🟢 Extreme crowded longs — short squeeze risk'; }
+    else if (f >=  0.05) { mod = +1.5; label = '🟢 Crowded longs — bearish lean'; }
+    else if (f >=  0.01) { mod = +0.5; label = '🟡 Mild positive funding'; }
+    else if (f <= -0.10) { mod = -2.0; label = '🔴 Extreme crowded shorts — bounce risk'; }
+    else if (f <= -0.05) { mod = -1.5; label = '🔴 Crowded shorts — bullish lean'; }
+    else if (f <= -0.01) { mod = -0.5; label = '🟡 Mild negative funding'; }
+    else                  { label = '⚪ Neutral funding'; }
+  }
+
+  return { mod, label, rate: f, pct: (f * 100).toFixed(4) + '%' };
+}
+
 // ── INDICATORS ────────────────────────────────────────────
 function calcRSI(closes, p=14) {
   if (closes.length < p+1) return 50;
@@ -381,7 +454,7 @@ function getVolatilitySqueeze(candles) {
 // squeeze = additional context. TP1=3x ATR, TP2=5x ATR.
 // ══════════════════════════════════════════════════════════
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze) {
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0) {
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
   const trend4hDir = trend4h?.trend || null;
@@ -430,7 +503,8 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
         emaSlope?.direction==='up'&&emaSlope?.accelerating ? 'Slope ↑' : '',
         squeeze?.releasing&&squeeze?.breakoutDir==='bull' ? 'Squeeze ↑' : ''
       ].filter(Boolean).join(' · ');
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''}`;
+      const fundingNoteB = getFundingModifier(fundingRate, 'BUY').label;
+      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${fundingNoteB}`;
       results.push({
         dir:'BUY', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'BUY'  : 'WATCH',
@@ -485,7 +559,8 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
         emaSlope?.direction==='down'&&emaSlope?.accelerating ? 'Slope ↓' : '',
         squeeze?.releasing&&squeeze?.breakoutDir==='bear' ? 'Squeeze ↓' : ''
       ].filter(Boolean).join(' · ');
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''}`;
+      const fundingNoteS = getFundingModifier(fundingRate, 'SELL').label;
+      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${fundingNoteS}`;
       results.push({
         dir:'SELL', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'SELL' : 'WATCH',
@@ -519,15 +594,24 @@ async function processPair(pair) {
   const vol      = (lastC.volume||0)*price;
   const mcap     = pair.mcap||0;
   const volRatio = mcap>0 ? vol/mcap : 0;
-  const priceStruct = getPriceStructure(candles1h);
-  const emaSlope    = getEMASlope(closes1h);
-  const squeeze     = getVolatilitySqueeze(candles1h);
-  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze);
+  const priceStruct  = getPriceStructure(candles1h);
+  const emaSlope     = getEMASlope(closes1h);
+  const squeeze      = getVolatilitySqueeze(candles1h);
+
+  // Fetch Bybit funding rate (non-price data — genuine predictive signal)
+  const fundingRate  = await getFundingRate(pair.sym);
+  const funding      = getFundingModifier(fundingRate, 'BUY'); // direction applied per signal below
+
+  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate);
   const topSig   = signals[0];
-  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pct}% 1H=${trend1h?.trend||'?'} 4H=${trend4h?.trend||'?'} → ${topSig?topSig.dir+' '+topSig.score+' ★'.repeat(topSig.conf):'HOLD'}`);
+
+  const fundingInfo = topSig ? getFundingModifier(fundingRate, topSig.dir) : funding;
+  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pct}% Funding=${(fundingRate*100).toFixed(4)}% → ${topSig?topSig.dir+' '+topSig.score+' ★'.repeat(topSig.conf):'HOLD'}`);
+
   return {
     sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h, priceStruct, emaSlope, squeeze,
+    fundingRate, fundingLabel: fundingInfo.label,
     score:    topSig?.score    || 5,
     swing:    topSig?.swing    || 'HOLD',
     scalp:    topSig?.scalp    || 'HOLD',
