@@ -357,6 +357,130 @@ function getFundingModifier(fundingRate, dir) {
   return { mod, label, rate: f, pct: (f * 100).toFixed(4) + '%' };
 }
 
+// ── BYBIT OPEN INTEREST ──────────────────────────────────
+// Rising OI + rising price = new longs entering = trend confirmation
+// Rising OI + falling price = new shorts entering = downtrend confirmation
+// Falling OI = positions closing = trend weakening
+
+const oiCache = {};
+const OI_TTL = 5 * 60 * 1000;
+
+async function getOpenInterest(sym) {
+  if (oiCache[sym] && (Date.now() - oiCache[sym].ts) < OI_TTL) {
+    return oiCache[sym].data;
+  }
+  const bybitSym = BYBIT_SYMBOLS[sym];
+  if (!bybitSym) return null;
+  try {
+    const { default: fetch } = await import('node-fetch');
+    // Get last 2 OI snapshots to calculate change
+    const url = `https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${bybitSym}&intervalTime=1h&limit=2`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error('OI HTTP ' + res.status);
+    const json = await res.json();
+    const list = json?.result?.list;
+    if (!list || list.length < 2) throw new Error('Insufficient OI data');
+    const current  = parseFloat(list[0].openInterest);
+    const previous = parseFloat(list[1].openInterest);
+    const change   = (current - previous) / previous; // % change
+    const data = { current, previous, change, rising: change > 0.005, falling: change < -0.005 };
+    oiCache[sym] = { data, ts: Date.now() };
+    return data;
+  } catch(e) {
+    console.log('OI ' + sym + ': ' + e.message);
+    return oiCache[sym]?.data || null;
+  }
+}
+
+// OI scoring modifier
+// OI rising + BUY signal = trend confirmed by new longs entering = +score
+// OI rising + SELL signal = shorts entering = trend confirmed = +score
+// OI falling = positions closing = trend losing conviction = -score
+function getOIModifier(oi, dir, pct24h) {
+  if (!oi) return { mod: 0, label: '' };
+  const priceRising = pct24h > 0;
+  let mod = 0;
+  let label = '';
+
+  if (dir === 'BUY') {
+    if (oi.rising && priceRising)       { mod = +1.0; label = '📈 OI rising with price (longs entering)'; }
+    else if (oi.rising && !priceRising) { mod = -0.5; label = '⚠️ OI rising but price falling (shorts entering)'; }
+    else if (oi.falling)                { mod = -0.5; label = '📉 OI falling (trend losing steam)'; }
+  } else {
+    if (oi.rising && !priceRising)      { mod = +1.0; label = '📈 OI rising with price falling (shorts entering)'; }
+    else if (oi.rising && priceRising)  { mod = -0.5; label = '⚠️ OI rising with price rising (longs entering)'; }
+    else if (oi.falling)                { mod = -0.5; label = '📉 OI falling (trend losing steam)'; }
+  }
+
+  return { mod, label };
+}
+
+// ── FEAR & GREED INDEX ────────────────────────────────────
+// Single free API call — no auth, no rate limits for 12 pairs
+// 0-24 = Extreme Fear (good BUY zone)
+// 25-44 = Fear
+// 45-55 = Neutral
+// 56-75 = Greed
+// 76-100 = Extreme Greed (good SELL zone)
+
+let fearGreedCache = null;
+const FG_TTL = 60 * 60 * 1000; // cache 1 hour — index updates daily
+
+async function getFearGreed() {
+  if (fearGreedCache && (Date.now() - fearGreedCache.ts) < FG_TTL) {
+    return fearGreedCache.data;
+  }
+  try {
+    const { default: fetch } = await import('node-fetch');
+    const res = await fetch('https://api.alternative.me/fng/?limit=1', {
+      headers: { Accept: 'application/json' }
+    });
+    if (!res.ok) throw new Error('FG HTTP ' + res.status);
+    const json = await res.json();
+    const val = parseInt(json?.data?.[0]?.value || 50);
+    const cls = json?.data?.[0]?.value_classification || 'Neutral';
+    const data = {
+      value: val,
+      classification: cls,
+      extremeFear:  val <= 24,
+      fear:         val >= 25 && val <= 44,
+      neutral:      val >= 45 && val <= 55,
+      greed:        val >= 56 && val <= 75,
+      extremeGreed: val >= 76
+    };
+    fearGreedCache = { data, ts: Date.now() };
+    console.log('Fear & Greed: ' + val + ' (' + cls + ')');
+    return data;
+  } catch(e) {
+    console.log('Fear & Greed: ' + e.message);
+    return fearGreedCache?.data || { value: 50, classification: 'Neutral', extremeFear: false, fear: false, neutral: true, greed: false, extremeGreed: false };
+  }
+}
+
+// Fear & Greed scoring modifier
+// Applied as a macro filter across all signals
+function getFearGreedModifier(fg, dir) {
+  if (!fg) return { mod: 0, label: '' };
+  let mod = 0;
+  let label = '';
+
+  if (dir === 'BUY') {
+    if (fg.extremeFear)  { mod = +1.5; label = '😱 Extreme Fear (' + fg.value + ') — historically strong BUY zone'; }
+    else if (fg.fear)    { mod = +0.5; label = '😨 Fear (' + fg.value + ') — cautious bullish'; }
+    else if (fg.greed)   { mod = -0.5; label = '😏 Greed (' + fg.value + ') — caution on longs'; }
+    else if (fg.extremeGreed) { mod = -1.5; label = '🤑 Extreme Greed (' + fg.value + ') — avoid longs'; }
+    else                 { label = '😐 Neutral sentiment (' + fg.value + ')'; }
+  } else {
+    if (fg.extremeGreed) { mod = +1.5; label = '🤑 Extreme Greed (' + fg.value + ') — historically strong SELL zone'; }
+    else if (fg.greed)   { mod = +0.5; label = '😏 Greed (' + fg.value + ') — cautious bearish'; }
+    else if (fg.fear)    { mod = -0.5; label = '😨 Fear (' + fg.value + ') — caution on shorts'; }
+    else if (fg.extremeFear) { mod = -1.5; label = '😱 Extreme Fear (' + fg.value + ') — avoid shorts'; }
+    else                 { label = '😐 Neutral sentiment (' + fg.value + ')'; }
+  }
+
+  return { mod, label };
+}
+
 // ── INDICATORS ────────────────────────────────────────────
 function calcRSI(closes, p=14) {
   if (closes.length < p+1) return 50;
@@ -454,7 +578,7 @@ function getVolatilitySqueeze(candles) {
 // squeeze = additional context. TP1=3x ATR, TP2=5x ATR.
 // ══════════════════════════════════════════════════════════
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0) {
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0) {
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
   const trend4hDir = trend4h?.trend || null;
@@ -504,7 +628,10 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
         squeeze?.releasing&&squeeze?.breakoutDir==='bull' ? 'Squeeze ↑' : ''
       ].filter(Boolean).join(' · ');
       const fundingNoteB = getFundingModifier(fundingRate, 'BUY').label;
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${fundingNoteB}`;
+      const oiNoteB     = getOIModifier(oi, 'BUY', pct24h).label;
+      const fgNoteB     = getFearGreedModifier(fg, 'BUY').label;
+      const extraData   = [fundingNoteB, oiNoteB, fgNoteB].filter(Boolean).join(' · ');
+      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraData}`;
       results.push({
         dir:'BUY', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'BUY'  : 'WATCH',
@@ -560,7 +687,10 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
         squeeze?.releasing&&squeeze?.breakoutDir==='bear' ? 'Squeeze ↓' : ''
       ].filter(Boolean).join(' · ');
       const fundingNoteS = getFundingModifier(fundingRate, 'SELL').label;
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${fundingNoteS}`;
+      const oiNoteS     = getOIModifier(oi, 'SELL', pct24h).label;
+      const fgNoteS     = getFearGreedModifier(fg, 'SELL').label;
+      const extraDataS  = [fundingNoteS, oiNoteS, fgNoteS].filter(Boolean).join(' · ');
+      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraDataS}`;
       results.push({
         dir:'SELL', score, conf, aligned, trendNote,
         swing: score >= 7.0 ? 'SELL' : 'WATCH',
@@ -602,7 +732,13 @@ async function processPair(pair) {
   const fundingRate  = await getFundingRate(pair.sym);
   const funding      = getFundingModifier(fundingRate, 'BUY'); // direction applied per signal below
 
-  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate);
+  // Fetch Open Interest and Fear & Greed (in parallel for speed)
+  const [oi, fg] = await Promise.all([
+    getOpenInterest(pair.sym),
+    getFearGreed()
+  ]);
+
+  const signals  = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h);
   const topSig   = signals[0];
 
   const fundingInfo = topSig ? getFundingModifier(fundingRate, topSig.dir) : funding;
@@ -612,6 +748,7 @@ async function processPair(pair) {
     sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h, priceStruct, emaSlope, squeeze,
     fundingRate, fundingLabel: fundingInfo.label,
+    oi, fg,
     score:    topSig?.score    || 5,
     swing:    topSig?.swing    || 'HOLD',
     scalp:    topSig?.scalp    || 'HOLD',
