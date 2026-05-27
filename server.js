@@ -763,8 +763,23 @@ async function runBacktest() {
         if (!sigs.length) continue;
         const sig = sigs[0];
         const outcome = checkOutcome(candles, idx, sig);
-        allResults.push({ sym:pair.sym, dir:sig.dir, conf:sig.conf, score:sig.score,
-          price, sl:sig.sl, tp1:sig.tp1, time:candles[idx].time, ...outcome });
+        // Store indicator flags so optimal filter can check them directly
+        const hasSlope = sig.dir === 'BUY'
+          ? (es?.direction === 'up')
+          : (es?.direction === 'down');
+        const hasStruct = sig.dir === 'BUY'
+          ? (ps?.structure === 'bull')
+          : (ps?.structure === 'bear');
+        const hasSqueeze = sig.dir === 'BUY'
+          ? (sq?.releasing && sq?.breakoutDir === 'bull')
+          : (sq?.releasing && sq?.breakoutDir === 'bear');
+
+        allResults.push({
+          sym:pair.sym, dir:sig.dir, conf:sig.conf, score:sig.score,
+          price, sl:sig.sl, tp1:sig.tp1, time:candles[idx].time,
+          rsi, hasSlope, hasStruct, hasSqueeze,
+          ...outcome
+        });
         lastIdx = idx;
       }
       console.log(`${pair.sym}: ${allResults.filter(r=>r.sym===pair.sym).length} signals`);
@@ -792,19 +807,11 @@ async function runBacktest() {
   // Rule 3: SELL RSI > 35 (no shorting into oversold)
   // Rule 4: Structure AND Squeeze both confirmed simultaneously
   function passesOptimalFilter(sig) {
-    const note = sig.trendNote || '';
+    // Uses boolean flags stored at backtest time — not trendNote strings
     const rule1 = sig.score >= 9.0;
-    const rule2 = sig.dir === 'BUY'
-      ? note.includes('Slope ↑')
-      : note.includes('Slope ↓');
+    const rule2 = sig.hasSlope === true;
     const rule3 = sig.dir === 'BUY' ? true : (sig.rsi || 50) > 35;
-    const hasStruct = sig.dir === 'BUY'
-      ? note.includes('Structure ↑')
-      : note.includes('Structure ↓');
-    const hasSqueeze = sig.dir === 'BUY'
-      ? note.includes('Squeeze ↑')
-      : note.includes('Squeeze ↓');
-    const rule4 = hasStruct && hasSqueeze;
+    const rule4 = sig.hasStruct === true && sig.hasSqueeze === true;
     return rule1 && rule2 && rule3 && rule4;
   }
 
@@ -840,14 +847,9 @@ async function runBacktest() {
       // Rule-by-rule breakdown — how many signals each rule blocks
       ruleBreakdown: {
         rule1_score_9:    { blocked: unfilteredStar3.filter(s=>s.score < 9.0).length },
-        rule2_slope:      { blocked: unfilteredStar3.filter(s=>!(s.dir==='BUY'?( s.trendNote||'').includes('Slope ↑'):(s.trendNote||'').includes('Slope ↓'))).length },
+        rule2_slope:      { blocked: unfilteredStar3.filter(s=>!s.hasSlope).length },
         rule3_sell_rsi:   { blocked: unfilteredStar3.filter(s=>s.dir==='SELL'&&(s.rsi||50)<=35).length },
-        rule4_struct_sqz: { blocked: unfilteredStar3.filter(s=>{
-          const n=s.trendNote||'';
-          const hasS=s.dir==='BUY'?n.includes('Structure ↑'):n.includes('Structure ↓');
-          const hasQ=s.dir==='BUY'?n.includes('Squeeze ↑'):n.includes('Squeeze ↓');
-          return !(hasS&&hasQ);
-        }).length }
+        rule4_struct_sqz: { blocked: unfilteredStar3.filter(s=>!(s.hasStruct&&s.hasSqueeze)).length }
       },
       recentFiltered: filteredResults.slice(-20).reverse()
     }
