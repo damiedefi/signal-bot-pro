@@ -872,6 +872,50 @@ function getTrend(closes, fast, slow) {
   return { trend: calcEMA(closes,fast) > calcEMA(closes,slow) ? 'bull' : 'bear' };
 }
 
+// ── MARKET REGIME DETECTOR ───────────────────────────────
+// Answers the core question: are we in an UPTREND or DOWNTREND?
+// This is what tells the bot when to allow BUY vs SELL.
+//
+// WHY THIS MATTERS (proven by 83-day backtest):
+//   - All 25 SELL signals lost because they fired in a bull market.
+//   - The 1H slope turned down during dips, triggering shorts,
+//     but the macro 4H trend was up so every dip got bought back.
+//   - A short 1H slope-down inside a bull trend is a DIP, not a
+//     downtrend. The bot was fighting the macro trend.
+//
+// FIX: use the 4H trend as a hard regime gate.
+//   regime = 'bull'    → only BUY allowed
+//   regime = 'bear'    → only SELL allowed
+//   regime = 'neutral' → both allowed but flagged (transition zone)
+//
+// STRICT DEFINITION (Option C — avoids whipsaw):
+//   bull = price ABOVE 4H EMA50 AND EMA50 rising
+//   bear = price BELOW 4H EMA50 AND EMA50 falling
+//   anything else = neutral (mixed signals, no strong regime)
+function getRegime(closes4h, price) {
+  if (!closes4h || closes4h.length < 55) return { regime: 'neutral', reason: 'insufficient 4H data' };
+
+  const ema50now  = calcEMA(closes4h, 50);
+  // EMA50 from 3 candles ago (12h ago) to measure slope
+  const ema50prev = calcEMA(closes4h.slice(0, -3), 50);
+
+  const priceAbove = price > ema50now;
+  const emaRising  = ema50now > ema50prev;
+  const emaFalling = ema50now < ema50prev;
+
+  // Slope magnitude as % to filter out flat/noise
+  const slopePct = ((ema50now - ema50prev) / ema50prev) * 100;
+  const meaningfulSlope = Math.abs(slopePct) > 0.15; // 0.15% over 12h on 4H
+
+  if (priceAbove && emaRising && meaningfulSlope) {
+    return { regime: 'bull', reason: 'price>EMA50 + EMA50 rising', slopePct: +slopePct.toFixed(2) };
+  }
+  if (!priceAbove && emaFalling && meaningfulSlope) {
+    return { regime: 'bear', reason: 'price<EMA50 + EMA50 falling', slopePct: +slopePct.toFixed(2) };
+  }
+  return { regime: 'neutral', reason: 'mixed/flat — no strong trend', slopePct: +slopePct.toFixed(2) };
+}
+
 // ── PRICE STRUCTURE ───────────────────────────────────────
 function getPriceStructure(candles) {
   if (candles.length < 20) return null;
@@ -1076,7 +1120,7 @@ function getChartLevels(candles, price, atr) {
   };
 }
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0, ls=null, ob=null, taker=null, sym='', chartLevels=null) {
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0, ls=null, ob=null, taker=null, sym='', chartLevels=null, regime=null) {
 
   // ══════════════════════════════════════════════════════
   // SIGNAL LOGIC — QUALITY-FIRST REBUILD
@@ -1130,6 +1174,20 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
     const macdOk = dir === 'BUY' ? macd.bull : !macd.bull;
     if (!macdOk) return 0;
 
+    // ── REGIME GATE (the trend filter) ──────────────────
+    // The bot must not fight the macro trend. This single gate
+    // would have blocked all 25 losing SELL signals in the
+    // bull-market backtest.
+    //   bull regime → BUY only (block SELL entirely)
+    //   bear regime → SELL only (block BUY entirely)
+    //   neutral     → allow both but they'll need higher conviction
+    const reg = regime?.regime || 'neutral';
+    if (reg === 'bull' && dir === 'SELL') return 0; // don't short an uptrend
+    if (reg === 'bear' && dir === 'BUY')  return 0; // don't buy a downtrend
+    // In neutral regime, both directions allowed but capped at ★★
+    // (no ★★★ in unclear conditions — wait for a real trend)
+    const neutralCap = (reg === 'neutral');
+
     // ══════════════════════════════════════════════════════
     // DATA-DRIVEN GATES — derived from 83-day backtest analysis
     //
@@ -1179,10 +1237,11 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
 
     // ★★★ = the proven 75%/+1.834R combo:
     //       slope + RR 2-5 + score>=7 + (structure OR squeeze)
-    if (score >= 7.0 && (structOk || squeezeOk)) return 3;
+    // In neutral regime, cap at ★★ — no ★★★ without a clear trend.
+    if (score >= 7.0 && (structOk || squeezeOk)) return neutralCap ? 2 : 3;
 
     // ★★★ = exceptional score alone in the profitable window
-    if (score >= 8.0) return 3;
+    if (score >= 8.0) return neutralCap ? 2 : 3;
 
     // ★★ = solid setup but needs TIGHTER RR (2.0-3.5) since weaker
     //      setups can't reach far targets. Squeeze adds the edge.
@@ -1441,17 +1500,18 @@ async function processPair(pair) {
   // Calculate chart-based SL/TP levels from real swing highs/lows
   const chartLevels = getChartLevels(candles1h, price, atr);
 
-  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h, ls, ob, taker, pair.sym, chartLevels);
+  const regime = getRegime(closes4h, price);
+  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h, ls, ob, taker, pair.sym, chartLevels, regime);
   const topSig   = signals[0];
 
   const fundingInfo = topSig ? getFundingModifier(fundingRate, topSig.dir) : funding;
-  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pct}% Funding=${(fundingRate*100).toFixed(4)}% → ${topSig?topSig.dir+' '+topSig.score+' ★'.repeat(topSig.conf):'HOLD'}`);
+  console.log(`${pair.sym}: RSI=${rsi} MACD=${macd.bull?'B':'b'} BB=${bb.pct}% Regime=${regime.regime.toUpperCase()} → ${topSig?topSig.dir+' '+topSig.score+' ★'.repeat(topSig.conf):'HOLD'}`);
 
   return {
     sym:pair.sym, price, pct24h, vol, mcap, volRatio,
     rsi, macd, bb, atr, trend1h, trend4h, priceStruct, emaSlope, squeeze,
     fundingRate, fundingLabel: fundingInfo.label,
-    oi, fg, ls, ob, taker,
+    oi, fg, ls, ob, taker, regime: regime.regime, regimeReason: regime.reason,
     score:    topSig?.score    || 5,
     swing:    topSig?.swing    || 'HOLD',
     scalp:    topSig?.scalp    || 'HOLD',
@@ -1664,7 +1724,8 @@ async function runBacktest() {
         const sq   = getVolatilitySqueeze(w1h);
         const price = w1h[w1h.length-1].close;
         const cl = getChartLevels(w1h, price, atr);
-        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price, ps, es, sq, 0, null, null, 0, null, null, null, pair.sym, cl);
+        const reg = getRegime(c4h, price);
+        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price, ps, es, sq, 0, null, null, 0, null, null, null, pair.sym, cl, reg);
         if (!sigs.length) continue;
         const sig = sigs[0];
 
