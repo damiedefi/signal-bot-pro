@@ -1097,21 +1097,22 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       const tkNoteB     = getTakerModifier(taker, 'BUY').label;
       const pmNoteB     = getPatternModifier(buyPatternKey).label;
       const extraData   = [fundingNoteB, oiNoteB, fgNoteB, lsNoteB, obNoteB, tkNoteB, pmNoteB].filter(Boolean).join(' · ');
+      // Assemble trendNote BEFORE using it
+      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraData}`;
       // Chart-based levels (real S/R) — fall back to ATR if unavailable
       const lv = chartLevels?.buy || { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' };
-      const rrNote = lv.rr >= 2.0 ? `✅ RR ${lv.rr}:1` : lv.rr >= 1.5 ? `RR ${lv.rr}:1` : `⚠️ RR ${lv.rr}:1 (low)`;
+      const rrNote = lv.rr >= 2.0 ? '✅ RR ' + lv.rr + ':1' : lv.rr >= 1.5 ? 'RR ' + lv.rr + ':1' : '⚠️ RR ' + lv.rr + ':1 (low)';
       const levelNote = lv.method === 'chart' ? 'Chart levels' : 'ATR levels';
 
       // MIN RR GATE — if chart says reward < 1.5x risk, downgrade
-      // The chart is telling us there isn't enough room. Cap at ★★.
       let finalConf = conf;
       if (lv.method === 'chart' && lv.rr < 1.5 && finalConf === 3) {
-        finalConf = 2; // downgrade — not enough room to justify high conviction
+        finalConf = 2;
       }
 
       results.push({
         dir:'BUY', score, conf: finalConf, aligned,
-        trendNote: `${trendNote} · ${levelNote} · ${rrNote}`,
+        trendNote: trendNote + ' · ' + levelNote + ' · ' + rrNote,
         swing: score >= 7.0 ? 'BUY'  : 'WATCH',
         scalp: score >= 6.5 ? 'BUY'  : 'WATCH',
         sl:  lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
@@ -1187,8 +1188,9 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       const tkNoteS     = getTakerModifier(taker, 'SELL').label;
       const pmNoteS     = getPatternModifier(sellPatternKey).label;
       const extraDataS  = [fundingNoteS, oiNoteS, fgNoteS, lsNoteS, obNoteS, tkNoteS, pmNoteS].filter(Boolean).join(' · ');
+      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraDataS}`;
       const lv = chartLevels?.sell || { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' };
-      const rrNote = lv.rr >= 2.0 ? `✅ RR ${lv.rr}:1` : lv.rr >= 1.5 ? `RR ${lv.rr}:1` : `⚠️ RR ${lv.rr}:1 (low)`;
+      const rrNote = lv.rr >= 2.0 ? '✅ RR ' + lv.rr + ':1' : lv.rr >= 1.5 ? 'RR ' + lv.rr + ':1' : '⚠️ RR ' + lv.rr + ':1 (low)';
       const levelNote = lv.method === 'chart' ? 'Chart levels' : 'ATR levels';
 
       let finalConf = conf;
@@ -1198,7 +1200,7 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
 
       results.push({
         dir:'SELL', score, conf: finalConf, aligned,
-        trendNote: `${trendNote} · ${levelNote} · ${rrNote}`,
+        trendNote: trendNote + ' · ' + levelNote + ' · ' + rrNote,
         swing: score >= 7.0 ? 'SELL' : 'WATCH',
         scalp: score >= 6.5 ? 'SELL' : 'WATCH',
         sl:  lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
