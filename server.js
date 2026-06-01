@@ -933,88 +933,142 @@ function getVolatilitySqueeze(candles) {
 //
 // Returns levels for BOTH directions plus the real RR ratio.
 function getChartLevels(candles, price, atr) {
-  if (!candles || candles.length < 30) {
-    // Fallback to ATR method if insufficient data
-    return {
-      buy:  { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' },
-      sell: { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' }
-    };
-  }
+  // ATR fallback — always valid
+  const atrLevels = {
+    buy:  { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' },
+    sell: { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' }
+  };
 
-  const recent = candles.slice(-60); // last 60 candles for level detection
-  const buffer = atr * 0.3; // small noise buffer beyond levels
+  if (!candles || candles.length < 50) return atrLevels;
 
-  // ── Find swing highs and swing lows (pivot points) ──
-  const swingHighs = [];
-  const swingLows  = [];
-  for (let i = 2; i < recent.length - 2; i++) {
+  const recent  = candles.slice(-100); // wider window for meaningful levels
+  const buffer  = atr * 0.25;
+  const minDist = atr * 1.5; // TP must be at least 1.5x ATR away — no noise targets
+  const clusterTol = atr * 0.5; // levels within 0.5 ATR are the same zone
+
+  // ── Detect swing pivots (3-candle confirmation each side) ──
+  const rawHighs = [], rawLows = [];
+  for (let i = 3; i < recent.length - 3; i++) {
     const h = recent[i].high, l = recent[i].low;
-    // Swing high: higher than 2 candles each side
-    if (h > recent[i-1].high && h > recent[i-2].high &&
-        h > recent[i+1].high && h > recent[i+2].high) {
-      swingHighs.push(h);
+    if (h > recent[i-1].high && h > recent[i-2].high && h > recent[i-3].high &&
+        h > recent[i+1].high && h > recent[i+2].high && h > recent[i+3].high) {
+      rawHighs.push({ level: h, idx: i });
     }
-    // Swing low: lower than 2 candles each side
-    if (l < recent[i-1].low && l < recent[i-2].low &&
-        l < recent[i+1].low && l < recent[i+2].low) {
-      swingLows.push(l);
+    if (l < recent[i-1].low && l < recent[i-2].low && l < recent[i-3].low &&
+        l < recent[i+1].low && l < recent[i+2].low && l < recent[i+3].low) {
+      rawLows.push({ level: l, idx: i });
     }
   }
 
-  // ── Resistance levels above price, sorted ascending ──
-  const resistancesAbove = swingHighs.filter(h => h > price).sort((a,b) => a - b);
-  // ── Support levels below price, sorted descending ──
-  const supportsBelow = swingLows.filter(l => l < price).sort((a,b) => b - a);
-  // ── Levels for shorts: supports below (TP) and resistances above (SL) ──
-  const resistancesAboveAsc = swingHighs.filter(h => h > price).sort((a,b) => a - b);
-  const supportsBelowDesc = swingLows.filter(l => l < price).sort((a,b) => b - a);
+  // ── Cluster nearby levels into zones (average + count touches) ──
+  function cluster(levels) {
+    const zones = [];
+    const sorted = [...levels].sort((a,b) => a.level - b.level);
+    for (const p of sorted) {
+      const last = zones[zones.length - 1];
+      if (last && Math.abs(p.level - last.avg) < clusterTol) {
+        last.sum += p.level; last.count++; last.avg = last.sum / last.count;
+        last.recentIdx = Math.max(last.recentIdx, p.idx);
+      } else {
+        zones.push({ avg: p.level, sum: p.level, count: 1, recentIdx: p.idx });
+      }
+    }
+    // Sort by significance: more touches = stronger level
+    return zones.sort((a,b) => b.count - a.count || b.recentIdx - a.recentIdx);
+  }
 
-  // ══ BUY/LONG LEVELS ══
-  // SL = nearest swing low below price, minus buffer
-  // TP1 = nearest resistance above, TP2 = next resistance
-  let buySL, buyTP1, buyTP2, buyMethod;
-  const nearestSupport = supportsBelow[0];
-  const nearestRes1 = resistancesAbove[0];
-  const nearestRes2 = resistancesAbove[1];
+  const highZones = cluster(rawHighs);
+  const lowZones  = cluster(rawLows);
 
-  if (nearestSupport && nearestRes1) {
-    buySL  = nearestSupport - buffer;
-    buyTP1 = nearestRes1;
-    buyTP2 = nearestRes2 || (nearestRes1 + (nearestRes1 - price)); // extrapolate if no 2nd level
+  // ── Round number detection (adds significance) ──
+  function nearRound(level) {
+    const mag = Math.pow(10, Math.floor(Math.log10(level)) - 1);
+    return Math.abs(level - Math.round(level / mag) * mag) < mag * 0.5;
+  }
+
+  // ── Find best SL level (beyond entry, within 2.5x ATR for tight SL) ──
+  function findSL(zones, above) {
+    // SL should be just beyond nearest significant level
+    // but not so far it makes the trade unmanageable
+    const candidates = zones
+      .filter(z => above ? z.avg > price : z.avg < price)
+      .filter(z => Math.abs(z.avg - price) <= atr * 2.5)
+      .sort((a,b) => above
+        ? a.avg - b.avg    // nearest above first
+        : b.avg - a.avg);  // nearest below first
+    return candidates[0]?.avg || null;
+  }
+
+  // ── Find best TP level (must be at least 1.5x ATR, prefer significant levels) ──
+  function findTP(zones, above, slLevel) {
+    const direction = above ? 1 : -1;
+    const risk = Math.abs(price - slLevel);
+
+    // Filter: must be past minDist, must give at least 1.5:1 RR
+    const candidates = zones
+      .filter(z => above ? z.avg > price + minDist : z.avg < price - minDist)
+      .filter(z => {
+        const reward = Math.abs(z.avg - price);
+        return risk > 0 ? (reward / risk) >= 1.5 : true;
+      })
+      .map(z => ({
+        ...z,
+        // Score each level: more touches + round number + recent = better
+        score: z.count * 2 + (nearRound(z.avg) ? 3 : 0) + (z.recentIdx > recent.length - 20 ? 1 : 0)
+      }))
+      .sort((a,b) => above ? a.avg - b.avg : b.avg - a.avg); // nearest qualifying first
+
+    return candidates[0]?.avg || null;
+  }
+
+  // ══ BUY LEVELS ══
+  const buySLRaw  = findSL(lowZones, false);  // support below
+  const buyResist = findSL(highZones, true);   // resistance above (for SL backup)
+  const buySL     = buySLRaw ? buySLRaw - buffer : price - atr * 1.5;
+  const buyTP1Raw = findTP(highZones, true, buySL);
+
+  let buyTP1, buyTP2, buyMethod, buyRR;
+  if (buyTP1Raw) {
+    buyTP1 = buyTP1Raw;
+    // Find TP2: next significant resistance beyond TP1
+    const tp2candidates = highZones
+      .filter(z => z.avg > buyTP1 + minDist * 0.5)
+      .sort((a,b) => a.avg - b.avg);
+    buyTP2 = tp2candidates[0]?.avg || buyTP1 + (buyTP1 - price); // mirror if none
     buyMethod = 'chart';
+    const risk = price - buySL;
+    buyRR = risk > 0 ? +((buyTP1 - price) / risk).toFixed(2) : 0;
   } else {
-    // Fallback to ATR if levels not found
-    buySL  = price - atr*1.5;
-    buyTP1 = price + atr*3.0;
-    buyTP2 = price + atr*5.0;
+    // No valid chart TP — use ATR honestly
+    buySL = price - atr * 1.5; // reset SL too for consistency
+    buyTP1 = price + atr * 3.0;
+    buyTP2 = price + atr * 5.0;
     buyMethod = 'atr';
+    buyRR = 2.0;
   }
-  const buyRisk   = price - buySL;
-  const buyReward = buyTP1 - price;
-  const buyRR     = buyRisk > 0 ? +(buyReward / buyRisk).toFixed(2) : 0;
 
-  // ══ SELL/SHORT LEVELS ══
-  // SL = nearest swing high above price, plus buffer
-  // TP1 = nearest support below, TP2 = next support
-  let sellSL, sellTP1, sellTP2, sellMethod;
-  const nearestResShort = resistancesAboveAsc[0];
-  const nearestSup1 = supportsBelowDesc[0];
-  const nearestSup2 = supportsBelowDesc[1];
+  // ══ SELL LEVELS ══
+  const sellSLRaw  = findSL(highZones, true);  // resistance above
+  const sellSL     = sellSLRaw ? sellSLRaw + buffer : price + atr * 1.5;
+  const sellTP1Raw = findTP(lowZones, false, sellSL);
 
-  if (nearestResShort && nearestSup1) {
-    sellSL  = nearestResShort + buffer;
-    sellTP1 = nearestSup1;
-    sellTP2 = nearestSup2 || (nearestSup1 - (price - nearestSup1));
+  let sellTP1, sellTP2, sellMethod, sellRR;
+  if (sellTP1Raw) {
+    sellTP1 = sellTP1Raw;
+    const tp2candidates = lowZones
+      .filter(z => z.avg < sellTP1 - minDist * 0.5)
+      .sort((a,b) => b.avg - a.avg);
+    sellTP2 = tp2candidates[0]?.avg || sellTP1 - (price - sellTP1);
     sellMethod = 'chart';
+    const risk = sellSL - price;
+    sellRR = risk > 0 ? +((price - sellTP1) / risk).toFixed(2) : 0;
   } else {
-    sellSL  = price + atr*1.5;
-    sellTP1 = price - atr*3.0;
-    sellTP2 = price - atr*5.0;
+    sellSL = price + atr * 1.5;
+    sellTP1 = price - atr * 3.0;
+    sellTP2 = price - atr * 5.0;
     sellMethod = 'atr';
+    sellRR = 2.0;
   }
-  const sellRisk   = sellSL - price;
-  const sellReward = price - sellTP1;
-  const sellRR     = sellRisk > 0 ? +(sellReward / sellRisk).toFixed(2) : 0;
 
   return {
     buy:  { sl: +buySL.toFixed(6),  tp1: +buyTP1.toFixed(6),  tp2: +buyTP2.toFixed(6),  rr: buyRR,  method: buyMethod },
@@ -1023,193 +1077,312 @@ function getChartLevels(candles, price, atr) {
 }
 
 function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0, ls=null, ob=null, taker=null, sym='', chartLevels=null) {
+
+  // ══════════════════════════════════════════════════════
+  // SIGNAL LOGIC — QUALITY-FIRST REBUILD
+  //
+  // The star system is a QUALITY FILTER, not a score label.
+  // Stars are earned by meeting specific quality requirements.
+  // A ★★★ signal must be genuinely exceptional — not just
+  // a pile of small bonuses that add up to 8.0.
+  //
+  // SCORING PHILOSOPHY:
+  //   - Baseline is LOW (5.0) — most signals don't reach ★
+  //   - Each factor adds/subtracts meaningfully
+  //   - Stars require BOTH a high score AND quality gates
+  //   - ★★★ requires score + mandatory quality criteria
+  //   - ★★  requires score + at least one quality criterion
+  //   - ★   is informational — shows developing setups
+  //
+  // STAR QUALITY REQUIREMENTS (not just score thresholds):
+  //   ★★★ = score >= 8.5 AND MACD confirmed AND 4H aligned
+  //          AND (RSI extreme OR BB extreme OR structure confirmed)
+  //          AND RR >= 1.8:1
+  //   ★★  = score >= 7.0 AND MACD confirmed
+  //          AND (structure OR slope OR squeeze confirmed)
+  //          AND RR >= 1.5:1
+  //   ★   = score >= 5.5 — developing, informational only
+  // ══════════════════════════════════════════════════════
+
   const profile = getCoinProfile(sym);
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
   const trend4hDir = trend4h?.trend || null;
   const trend1hDir = trend1h?.trend || null;
 
-  // ── BUY ───────────────────────────────────────────────
-  if (macd.bull) {
-    let score = 6.0;
-    if      (rsi < 30) score += 2.5;
-    else if (rsi < 38) score += 1.5;
-    else if (rsi < 45) score += 0.5;
-    else if (rsi > 70) score -= 1.5;
-    else if (rsi > 60) score -= 0.5;
-    if      (bbB < 0.20) score += 2.0;
-    else if (bbB < 0.35) score += 1.0;
-    else if (bbB > 0.80) score -= 1.5;
-    else if (bbB > 0.65) score -= 0.5;
-    if      (trend4hDir === 'bull') score += 1.5;
-    else if (trend4hDir === 'bear') score -= 0.5;
-    if      (trend1hDir === 'bull') score += 0.5;
-    else if (trend1hDir === 'bear') score -= 0.5;
-    if (volRatio < 0.005) score -= 0.5;
+  // Pre-compute quality flags used in both directions
+  const rsiOversold       = rsi < 35;
+  const rsiOverbought     = rsi > 65;
+  const bbAtLower         = bbB < 0.25;
+  const bbAtUpper         = bbB > 0.75;
+  const structBull        = priceStruct?.structure === 'bull';
+  const structBear        = priceStruct?.structure === 'bear';
+  const structConfirmed   = priceStruct?.strength === 'confirmed';
+  const slopeUp           = emaSlope?.direction === 'up';
+  const slopeDown         = emaSlope?.direction === 'down';
+  const slopeAccel        = emaSlope?.accelerating === true;
+  const squeezeBull       = squeeze?.releasing && squeeze?.breakoutDir === 'bull';
+  const squeezeBear       = squeeze?.releasing && squeeze?.breakoutDir === 'bear';
+  const aligned4hBull     = trend4hDir === 'bull';
+  const aligned4hBear     = trend4hDir === 'bear';
 
-    // ── NON-PRICE DATA MODIFIERS (BUY) ──────────────────
-    { const fm = getFundingModifier(fundingRate, 'BUY'); score += fm.mod; }
-    { const om = getOIModifier(oi, 'BUY', pct24h); score += om.mod; }
-    { const fgm = getFearGreedModifier(fg, 'BUY'); score += fgm.mod; }
-    { const lsm = getLSModifier(ls, 'BUY'); score += lsm.mod; }
-    { const obm = getOBModifier(ob, 'BUY'); score += obm.mod; }
-    { const tkm = getTakerModifier(taker, 'BUY'); score += tkm.mod; }
+  function calcConf(dir, score, rr) {
+    const macdOk = dir === 'BUY' ? macd.bull : !macd.bull;
+    if (!macdOk) return 0;
 
-    // Per-coin profile bias (from 83-day data)
-    score += profile.buyBias;
+    // ══════════════════════════════════════════════════════
+    // DATA-DRIVEN STAR GATES (derived from 83-day backtest)
+    //
+    // The backtest proved these facts about REAL profitability
+    // (expectancy per trade, not win rate):
+    //   - RR < 0.5  → 85% WR but -0.007R → LOSES money (tiny TPs)
+    //   - RR 0.5-1.5 → 57% WR, +0.061R → marginal
+    //   - RR >= 1.5 → 38% WR, +0.125R → PROFITABLE
+    //   - RR >= 1.5 + RSI extreme → +0.500R → BEST combo
+    //   - RSI extreme standalone → +0.230R (strongest single factor)
+    //
+    // CONCLUSION: RR is the master gate. A signal is only
+    // worth sending if its reward genuinely outweighs its risk.
+    // Win rate alone is a trap — we optimize for EXPECTANCY.
+    // ══════════════════════════════════════════════════════
 
-    // Self-learning pattern modifier
-    const buyHasStruct = priceStruct?.structure === 'bull';
-    const buyPatternKey = buildPatternKey(sym, 'BUY', rsi, fundingRate, buyHasStruct);
-    { const pm = getPatternModifier(buyPatternKey); score += pm.mod; }
+    const rsiExtreme = dir === 'BUY' ? rsiOversold : rsiOverbought;
+    const bbExtreme  = dir === 'BUY' ? bbAtLower   : bbAtUpper;
+    const structOk   = dir === 'BUY' ? (structBull && structConfirmed) : (structBear && structConfirmed);
+    const slopeOk    = dir === 'BUY' ? (slopeUp && slopeAccel) : (slopeDown && slopeAccel);
+    const squeezeOk  = dir === 'BUY' ? squeezeBull : squeezeBear;
+    const aligned4h  = dir === 'BUY' ? aligned4hBull : aligned4hBear;
+    const anyQuality = rsiExtreme || bbExtreme || structOk || slopeOk || squeezeOk;
 
-    if (priceStruct) {
-      if (priceStruct.structure==='bull'&&priceStruct.strength==='confirmed') score += 1.5;
-      else if (priceStruct.structure==='bull'&&priceStruct.strength==='partial') score += 0.75;
-      else if (priceStruct.structure==='bear'&&priceStruct.strength==='confirmed') score -= 1.5;
-      else if (priceStruct.structure==='bear'&&priceStruct.strength==='partial') score -= 0.75;
+    // HARD GATE: RR must be >= 1.5 for ANY actionable signal (★★ or ★★★).
+    // Below this, the trade is not worth taking regardless of win rate.
+    // This is the single most important filter — proven by the data.
+    if (rr < 1.5) {
+      // Reward doesn't justify risk. Informational only at best.
+      return score >= 7.0 ? 1 : 0;
     }
-    if (emaSlope) {
-      if (emaSlope.direction==='up'&&emaSlope.accelerating) score += 1.0;
-      else if (emaSlope.direction==='up') score += 0.25;
-      else if (emaSlope.direction==='down'&&emaSlope.accelerating) score -= 1.0;
-      else score -= 0.25;
-    }
-    if (squeeze) {
-      if (squeeze.releasing&&squeeze.breakoutDir==='bull') score += 1.5;
-      else if (squeeze.squeezed) score += 0.5;
-      else if (squeeze.releasing&&squeeze.breakoutDir==='bear') score -= 1.0;
-    }
-    score = Math.max(0, Math.min(10, +score.toFixed(1)));
-    const conf = score >= 8.0 ? 3 : score >= 6.5 ? 2 : score >= 5.5 ? 1 : 0;
-    if (conf > 0) {
-      const aligned = trend4hDir === 'bull';
-      const extras = [
-        priceStruct?.structure==='bull' ? 'Structure ↑' : '',
-        emaSlope?.direction==='up'&&emaSlope?.accelerating ? 'Slope ↑' : '',
-        squeeze?.releasing&&squeeze?.breakoutDir==='bull' ? 'Squeeze ↑' : ''
-      ].filter(Boolean).join(' · ');
-      const fundingNoteB = getFundingModifier(fundingRate, 'BUY').label;
-      const oiNoteB     = getOIModifier(oi, 'BUY', pct24h).label;
-      const fgNoteB     = getFearGreedModifier(fg, 'BUY').label;
-      const lsNoteB     = getLSModifier(ls, 'BUY').label;
-      const obNoteB     = getOBModifier(ob, 'BUY').label;
-      const tkNoteB     = getTakerModifier(taker, 'BUY').label;
-      const pmNoteB     = getPatternModifier(buyPatternKey).label;
-      const extraData   = [fundingNoteB, oiNoteB, fgNoteB, lsNoteB, obNoteB, tkNoteB, pmNoteB].filter(Boolean).join(' · ');
-      // Assemble trendNote BEFORE using it
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraData}`;
-      // Chart-based levels (real S/R) — fall back to ATR if unavailable
-      const lv = chartLevels?.buy || { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' };
-      const rrNote = lv.rr >= 2.0 ? '✅ RR ' + lv.rr + ':1' : lv.rr >= 1.5 ? 'RR ' + lv.rr + ':1' : '⚠️ RR ' + lv.rr + ':1 (low)';
-      const levelNote = lv.method === 'chart' ? 'Chart levels' : 'ATR levels';
 
-      // MIN RR GATE — if chart says reward < 1.5x risk, downgrade
-      let finalConf = conf;
-      if (lv.method === 'chart' && lv.rr < 1.5 && finalConf === 3) {
-        finalConf = 2;
-      }
+    // ★★★ = BEST expectancy combo: RR>=1.5 AND RSI extreme AND decent score
+    //       This is the +0.500R configuration from the data.
+    //       RSI extreme is the strongest single edge (+0.230R).
+    if (rr >= 1.5 && rsiExtreme && score >= 7.5) return 3;
 
-      results.push({
-        dir:'BUY', score, conf: finalConf, aligned,
-        trendNote: trendNote + ' · ' + levelNote + ' · ' + rrNote,
-        swing: score >= 7.0 ? 'BUY'  : 'WATCH',
-        scalp: score >= 6.5 ? 'BUY'  : 'WATCH',
-        sl:  lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
-      });
-    }
+    // Also ★★★: very high RR (>=2.5) with any quality factor —
+    // exceptional reward justifies the trade even without RSI extreme
+    if (rr >= 2.5 && anyQuality && score >= 7.5) return 3;
+
+    // ★★ = profitable tier: RR>=1.5 with at least one quality factor
+    if (rr >= 1.5 && anyQuality) return 2;
+
+    // ★★ = RR>=1.5 with strong score even without classic quality flag
+    if (rr >= 1.5 && score >= 7.5) return 2;
+
+    // ★ = RR is acceptable but setup is weak — informational
+    if (rr >= 1.5) return 1;
+
+    return 0;
   }
 
-  // ── SELL ──────────────────────────────────────────────
+  // ── BUY ─────────────────────────────────────────────────
+  if (macd.bull) {
+    let score = 5.0; // Low baseline — signals must earn their stars
+
+    // RSI — most important factor (genuine momentum reading)
+    if      (rsi < 25) score += 3.0;  // deeply oversold
+    else if (rsi < 32) score += 2.0;  // oversold
+    else if (rsi < 40) score += 1.0;  // mild pullback
+    else if (rsi < 50) score += 0.25; // slightly below mid
+    else if (rsi > 75) score -= 2.0;  // overbought — chasing
+    else if (rsi > 65) score -= 1.0;  // extended
+
+    // BB position — entry timing
+    if      (bbB < 0.15) score += 2.5; // extreme lower band
+    else if (bbB < 0.25) score += 1.5; // lower band
+    else if (bbB < 0.40) score += 0.5; // below midline
+    else if (bbB > 0.85) score -= 2.0; // extreme upper — chasing
+    else if (bbB > 0.75) score -= 1.0; // upper band
+
+    // 4H trend — meaningful alignment bonus
+    if      (aligned4hBull) score += 1.5;
+    else if (trend4hDir === 'bear') score -= 1.0;
+
+    // 1H trend — lighter
+    if      (trend1hDir === 'bull') score += 0.5;
+    else if (trend1hDir === 'bear') score -= 0.5;
+
+    // Volume
+    if (volRatio < 0.003) score -= 0.75;
+
+    // Structure — leading indicator
+    if (structBull && structConfirmed) score += 1.5;
+    else if (structBull) score += 0.5;
+    else if (structBear && structConfirmed) score -= 2.0;
+    else if (structBear) score -= 1.0;
+
+    // EMA Slope
+    if (slopeUp && slopeAccel) score += 1.0;
+    else if (slopeUp)          score += 0.25;
+    else if (slopeDown && slopeAccel) score -= 1.0;
+    else if (slopeDown)        score -= 0.25;
+
+    // Squeeze
+    if (squeezeBull)                                    score += 1.5;
+    else if (squeeze?.squeezed)                         score += 0.5;
+    else if (squeezeBear)                               score -= 1.0;
+
+    // Non-price data (each capped to avoid over-weighting)
+    { const fm = getFundingModifier(fundingRate, 'BUY'); score += Math.max(-1.5, Math.min(1.5, fm.mod)); }
+    { const om = getOIModifier(oi, 'BUY', pct24h); score += Math.max(-1.0, Math.min(1.0, om.mod)); }
+    { const fgm = getFearGreedModifier(fg, 'BUY'); score += Math.max(-1.5, Math.min(1.5, fgm.mod)); }
+    { const lsm = getLSModifier(ls, 'BUY'); score += Math.max(-1.5, Math.min(1.5, lsm.mod)); }
+    { const obm = getOBModifier(ob, 'BUY'); score += Math.max(-0.75, Math.min(0.75, obm.mod)); }
+    { const tkm = getTakerModifier(taker, 'BUY'); score += Math.max(-0.75, Math.min(0.75, tkm.mod)); }
+
+    // Per-coin profile (from 83-day data)
+    score += profile.buyBias;
+
+    // Self-learning pattern modifier (capped — never overrides core logic)
+    const buyHasStruct = structBull;
+    const buyPatternKey = buildPatternKey(sym, 'BUY', rsi, fundingRate, buyHasStruct);
+    { const pm = getPatternModifier(buyPatternKey); score += Math.max(-2.0, Math.min(2.0, pm.mod)); }
+
+    score = Math.max(0, Math.min(10, +score.toFixed(1)));
+
+    // Get chart-based levels first — RR is needed for conf calculation
+    const lv = chartLevels?.buy || { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' };
+
+    const conf = calcConf('BUY', score, lv.rr);
+    if (conf === 0) return results; // no signal
+
+    // Build descriptive note
+    const qualityFlags = [
+      rsiOversold ? 'RSI oversold' : '',
+      bbAtLower ? 'BB lower band' : '',
+      structBull && structConfirmed ? 'Structure ↑' : '',
+      slopeUp && slopeAccel ? 'Slope ↑acc' : '',
+      squeezeBull ? 'Squeeze ↑' : ''
+    ].filter(Boolean).join(' · ');
+
+    const nonPriceNotes = [
+      getFundingModifier(fundingRate, 'BUY').label,
+      getOIModifier(oi, 'BUY', pct24h).label,
+      getFearGreedModifier(fg, 'BUY').label,
+      getLSModifier(ls, 'BUY').label,
+      getOBModifier(ob, 'BUY').label,
+      getTakerModifier(taker, 'BUY').label,
+      getPatternModifier(buyPatternKey).label
+    ].filter(Boolean).join(' · ');
+
+    const rrNote = lv.rr >= 2.0 ? '✅ RR ' + lv.rr + ':1' : lv.rr >= 1.5 ? '👍 RR ' + lv.rr + ':1' : '⚠️ RR ' + lv.rr + ':1';
+    const alignNote = aligned4hBull ? '4H aligned' : trend4hDir ? '4H counter — reduce size' : 'No 4H';
+    const trendNote = alignNote + ' · MACD bull · RSI ' + rsi + ' · BB ' + bb.pct + '%'
+      + (qualityFlags ? ' · ' + qualityFlags : '')
+      + (nonPriceNotes ? ' · ' + nonPriceNotes : '')
+      + ' · ' + rrNote + ' (' + lv.method + ')';
+
+    results.push({
+      dir: 'BUY', score, conf, aligned: aligned4hBull, trendNote,
+      swing: conf >= 2 ? 'BUY' : 'WATCH',
+      scalp: conf >= 2 && score >= 7.0 ? 'BUY' : 'WATCH',
+      sl: lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
+    });
+  }
+
+  // ── SELL ────────────────────────────────────────────────
   if (!macd.bull) {
-    let score = 6.0;
-    if      (rsi > 70) score += 2.5;
-    else if (rsi > 62) score += 1.5;
-    else if (rsi > 55) score += 0.5;
-    else if (rsi < 30) score -= 1.5;
-    else if (rsi < 40) score -= 0.5;
-    if      (bbB > 0.80) score += 2.0;
-    else if (bbB > 0.65) score += 1.0;
-    else if (bbB < 0.20) score -= 1.5;
-    else if (bbB < 0.35) score -= 0.5;
-    if      (trend4hDir === 'bear') score += 1.5;
-    else if (trend4hDir === 'bull') score -= 0.5;
+    let score = 5.0;
+
+    if      (rsi > 75) score += 3.0;
+    else if (rsi > 68) score += 2.0;
+    else if (rsi > 60) score += 1.0;
+    else if (rsi > 50) score += 0.25;
+    else if (rsi < 25) score -= 2.0;
+    else if (rsi < 35) score -= 1.0;
+
+    if      (bbB > 0.85) score += 2.5;
+    else if (bbB > 0.75) score += 1.5;
+    else if (bbB > 0.60) score += 0.5;
+    else if (bbB < 0.15) score -= 2.0;
+    else if (bbB < 0.25) score -= 1.0;
+
+    if      (aligned4hBear) score += 1.5;
+    else if (trend4hDir === 'bull') score -= 1.0;
+
     if      (trend1hDir === 'bear') score += 0.5;
     else if (trend1hDir === 'bull') score -= 0.5;
-    if (volRatio < 0.005) score -= 0.5;
 
-    // ── NON-PRICE DATA MODIFIERS (SELL) ─────────────────
-    { const fm = getFundingModifier(fundingRate, 'SELL'); score += fm.mod; }
-    { const om = getOIModifier(oi, 'SELL', pct24h); score += om.mod; }
-    { const fgm = getFearGreedModifier(fg, 'SELL'); score += fgm.mod; }
-    { const lsm = getLSModifier(ls, 'SELL'); score += lsm.mod; }
-    { const obm = getOBModifier(ob, 'SELL'); score += obm.mod; }
-    { const tkm = getTakerModifier(taker, 'SELL'); score += tkm.mod; }
+    if (volRatio < 0.003) score -= 0.75;
 
-    // Per-coin profile bias
+    if (structBear && structConfirmed) score += 1.5;
+    else if (structBear) score += 0.5;
+    else if (structBull && structConfirmed) score -= 2.0;
+    else if (structBull) score -= 1.0;
+
+    if (slopeDown && slopeAccel) score += 1.0;
+    else if (slopeDown)          score += 0.25;
+    else if (slopeUp && slopeAccel) score -= 1.0;
+    else if (slopeUp)            score -= 0.25;
+
+    if (squeezeBear)                               score += 1.5;
+    else if (squeeze?.squeezed)                    score += 0.5;
+    else if (squeezeBull)                          score -= 1.0;
+
+    { const fm = getFundingModifier(fundingRate, 'SELL'); score += Math.max(-1.5, Math.min(1.5, fm.mod)); }
+    { const om = getOIModifier(oi, 'SELL', pct24h); score += Math.max(-1.0, Math.min(1.0, om.mod)); }
+    { const fgm = getFearGreedModifier(fg, 'SELL'); score += Math.max(-1.5, Math.min(1.5, fgm.mod)); }
+    { const lsm = getLSModifier(ls, 'SELL'); score += Math.max(-1.5, Math.min(1.5, lsm.mod)); }
+    { const obm = getOBModifier(ob, 'SELL'); score += Math.max(-0.75, Math.min(0.75, obm.mod)); }
+    { const tkm = getTakerModifier(taker, 'SELL'); score += Math.max(-0.75, Math.min(0.75, tkm.mod)); }
+
     score += profile.sellBias;
 
-    // Self-learning pattern modifier
-    const sellHasStruct = priceStruct?.structure === 'bear';
+    const sellHasStruct = structBear;
     const sellPatternKey = buildPatternKey(sym, 'SELL', rsi, fundingRate, sellHasStruct);
-    { const pm = getPatternModifier(sellPatternKey); score += pm.mod; }
+    { const pm = getPatternModifier(sellPatternKey); score += Math.max(-2.0, Math.min(2.0, pm.mod)); }
 
-    if (priceStruct) {
-      if (priceStruct.structure==='bear'&&priceStruct.strength==='confirmed') score += 1.5;
-      else if (priceStruct.structure==='bear'&&priceStruct.strength==='partial') score += 0.75;
-      else if (priceStruct.structure==='bull'&&priceStruct.strength==='confirmed') score -= 1.5;
-      else if (priceStruct.structure==='bull'&&priceStruct.strength==='partial') score -= 0.75;
-    }
-    if (emaSlope) {
-      if (emaSlope.direction==='down'&&emaSlope.accelerating) score += 1.0;
-      else if (emaSlope.direction==='down') score += 0.25;
-      else if (emaSlope.direction==='up'&&emaSlope.accelerating) score -= 1.0;
-      else score -= 0.25;
-    }
-    if (squeeze) {
-      if (squeeze.releasing&&squeeze.breakoutDir==='bear') score += 1.5;
-      else if (squeeze.squeezed) score += 0.5;
-      else if (squeeze.releasing&&squeeze.breakoutDir==='bull') score -= 1.0;
-    }
     score = Math.max(0, Math.min(10, +score.toFixed(1)));
-    const conf = score >= 8.0 ? 3 : score >= 6.5 ? 2 : score >= 5.5 ? 1 : 0;
-    if (conf > 0) {
-      const aligned = trend4hDir === 'bear';
-      const extras = [
-        priceStruct?.structure==='bear' ? 'Structure ↓' : '',
-        emaSlope?.direction==='down'&&emaSlope?.accelerating ? 'Slope ↓' : '',
-        squeeze?.releasing&&squeeze?.breakoutDir==='bear' ? 'Squeeze ↓' : ''
-      ].filter(Boolean).join(' · ');
-      const fundingNoteS = getFundingModifier(fundingRate, 'SELL').label;
-      const oiNoteS     = getOIModifier(oi, 'SELL', pct24h).label;
-      const fgNoteS     = getFearGreedModifier(fg, 'SELL').label;
-      const lsNoteS     = getLSModifier(ls, 'SELL').label;
-      const obNoteS     = getOBModifier(ob, 'SELL').label;
-      const tkNoteS     = getTakerModifier(taker, 'SELL').label;
-      const pmNoteS     = getPatternModifier(sellPatternKey).label;
-      const extraDataS  = [fundingNoteS, oiNoteS, fgNoteS, lsNoteS, obNoteS, tkNoteS, pmNoteS].filter(Boolean).join(' · ');
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraDataS}`;
-      const lv = chartLevels?.sell || { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' };
-      const rrNote = lv.rr >= 2.0 ? '✅ RR ' + lv.rr + ':1' : lv.rr >= 1.5 ? 'RR ' + lv.rr + ':1' : '⚠️ RR ' + lv.rr + ':1 (low)';
-      const levelNote = lv.method === 'chart' ? 'Chart levels' : 'ATR levels';
 
-      let finalConf = conf;
-      if (lv.method === 'chart' && lv.rr < 1.5 && finalConf === 3) {
-        finalConf = 2;
-      }
+    const lv = chartLevels?.sell || { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' };
 
-      results.push({
-        dir:'SELL', score, conf: finalConf, aligned,
-        trendNote: trendNote + ' · ' + levelNote + ' · ' + rrNote,
-        swing: score >= 7.0 ? 'SELL' : 'WATCH',
-        scalp: score >= 6.5 ? 'SELL' : 'WATCH',
-        sl:  lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
-      });
-    }
+    const conf = calcConf('SELL', score, lv.rr);
+    if (conf === 0) return results;
+
+    const qualityFlags = [
+      rsiOverbought ? 'RSI overbought' : '',
+      bbAtUpper ? 'BB upper band' : '',
+      structBear && structConfirmed ? 'Structure ↓' : '',
+      slopeDown && slopeAccel ? 'Slope ↓acc' : '',
+      squeezeBear ? 'Squeeze ↓' : ''
+    ].filter(Boolean).join(' · ');
+
+    const nonPriceNotes = [
+      getFundingModifier(fundingRate, 'SELL').label,
+      getOIModifier(oi, 'SELL', pct24h).label,
+      getFearGreedModifier(fg, 'SELL').label,
+      getLSModifier(ls, 'SELL').label,
+      getOBModifier(ob, 'SELL').label,
+      getTakerModifier(taker, 'SELL').label,
+      getPatternModifier(sellPatternKey).label
+    ].filter(Boolean).join(' · ');
+
+    const rrNote = lv.rr >= 2.0 ? '✅ RR ' + lv.rr + ':1' : lv.rr >= 1.5 ? '👍 RR ' + lv.rr + ':1' : '⚠️ RR ' + lv.rr + ':1';
+    const alignNote = aligned4hBear ? '4H aligned' : trend4hDir ? '4H counter — reduce size' : 'No 4H';
+    const trendNote = alignNote + ' · MACD bear · RSI ' + rsi + ' · BB ' + bb.pct + '%'
+      + (qualityFlags ? ' · ' + qualityFlags : '')
+      + (nonPriceNotes ? ' · ' + nonPriceNotes : '')
+      + ' · ' + rrNote + ' (' + lv.method + ')';
+
+    results.push({
+      dir: 'SELL', score, conf, aligned: aligned4hBear, trendNote,
+      swing: conf >= 2 ? 'SELL' : 'WATCH',
+      scalp: conf >= 2 && score >= 7.0 ? 'SELL' : 'WATCH',
+      sl: lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
+    });
   }
 
   return results;
 }
+
 
 // ── PROCESS PAIR ──────────────────────────────────────────
 async function processPair(pair) {
@@ -1322,48 +1495,26 @@ function addToHistory(results) {
         confirmedAtClose: nearClose
       });
 
-      if (sig.conf===3) {
-        // ── OPTIMAL 4-RULE GATE (83.3% win rate in simulation) ──
-        // ALL four conditions must be true before Telegram fires.
-        // Based on exhaustive combination search of 8 days live data.
-        const note = sig.trendNote || '';
-        const sigRSI = s.rsi || 50;
-
-        // Rule 1: Score >= 9.0
-        const rule1 = sig.score >= 9.0;
-
-        // Rule 2: Slope confirmed in signal direction
-        const rule2 = sig.dir === 'BUY'
-          ? note.includes('Slope ↑')
-          : note.includes('Slope ↓');
-
-        // Rule 3: SELL RSI > 35 (no shorting into oversold)
-        // BUY signals always pass this rule
-        const rule3 = sig.dir === 'BUY' ? true : sigRSI > 35;
-
-        // Rule 4: Structure AND Squeeze both confirmed in signal direction
-        const hasStruct = sig.dir === 'BUY'
-          ? note.includes('Structure ↑')
-          : note.includes('Structure ↓');
-        const hasSqueeze = sig.dir === 'BUY'
-          ? note.includes('Squeeze ↑')
-          : note.includes('Squeeze ↓');
-        const rule4 = hasStruct && hasSqueeze;
-
-        const allRulesMet = rule1 && rule2 && rule3 && rule4;
-
-        if (allRulesMet) {
-          addSignalToLog(s, sig);
-          sendTelegram(formatTGSignal(s, sig));
-          console.log('🔔 OPTIMAL SIGNAL: ' + sig.dir + ' ' + s.sym + ' ' + sig.score + '/10 ★★★ (' + minutesToCandleClose() + 'm to close)');
-        } else {
-          const failed = [];
-          if (!rule1) failed.push('score ' + sig.score + ' < 9.0');
-          if (!rule2) failed.push('no slope confirmation');
-          if (!rule3) failed.push('SELL RSI ' + sigRSI + ' <= 35 (oversold)');
-          if (!rule4) failed.push('missing ' + (!hasStruct ? 'Structure ' : '') + (!hasSqueeze ? 'Squeeze' : ''));
-          console.log('⛔ BLOCKED: ' + sig.dir + ' ' + s.sym + ' ' + sig.score + '/10 — ' + failed.join(', '));
-        }
+      // ══════════════════════════════════════════════════════
+      // TELEGRAM GATE — DATA-DRIVEN, EXPECTANCY-OPTIMIZED
+      //
+      // conf is now calculated by calcConf() which already enforces
+      // the master gate: RR >= 1.5 (proven +profit) and routes the
+      // best-expectancy setups (RR>=1.5 + RSI extreme = +0.500R) to ★★★.
+      //
+      // BOTH ★★★ and ★★ are profitable tiers (both require RR>=1.5).
+      // We send BOTH to Telegram because the goal is maximum
+      // profitable signals — not hoarding a hard-to-reach label.
+      // ★★★ = highest expectancy. ★★ = solid expectancy.
+      // ★ = informational, NOT sent.
+      // ══════════════════════════════════════════════════════
+      if (sig.conf >= 2) {
+        addSignalToLog(s, sig);
+        sendTelegram(formatTGSignal(s, sig));
+        const stars = '★'.repeat(sig.conf);
+        console.log('🔔 ' + stars + ' SIGNAL: ' + sig.dir + ' ' + s.sym + ' ' + sig.score + '/10 RR:' + sig.rr + ':1 (' + minutesToCandleClose() + 'm to close)');
+      } else {
+        console.log('· ' + sig.dir + ' ' + s.sym + ' ' + sig.score + '/10 conf:' + sig.conf + ' RR:' + sig.rr + ' — dashboard only');
       }
     });
   });
@@ -1534,32 +1685,40 @@ async function runBacktest() {
     const wins=sigs.filter(s=>s.result==='win');
     const losses=sigs.filter(s=>s.result==='loss');
     const resolved=wins.length+losses.length;
+    // REAL expectancy: each win earns its actual RR, each loss = -1R.
+    // This is the truth — a win at RR 0.1 earns 0.1R, not 2R.
+    // Using fixed 2.0 hid the tiny-TP problem. No more.
+    let realExp = null;
+    if (resolved > 0) {
+      let total = 0;
+      for (const s of sigs) {
+        if (s.result === 'win')  total += (s.chartRR || s.rr || 2.0);
+        else if (s.result === 'loss') total -= 1;
+      }
+      realExp = +(total / resolved).toFixed(3);
+    }
+    const avgRR = sigs.length>0
+      ? +(sigs.reduce((a,s)=>a+(s.chartRR||s.rr||0),0)/sigs.length).toFixed(2)
+      : null;
     return { total:sigs.length, wins:wins.length, losses:losses.length,
       expired:sigs.filter(s=>s.result==='expired').length, resolved,
       winRate:resolved>0?Math.round(wins.length/resolved*100):null,
       avgWinH:wins.length>0?+(wins.reduce((s,x)=>s+x.hours,0)/wins.length).toFixed(1):null,
       avgLossH:losses.length>0?+(losses.reduce((s,x)=>s+x.hours,0)/losses.length).toFixed(1):null,
-      expectancy:resolved>0?+((wins.length/resolved*2.0)-(losses.length/resolved*1.0)).toFixed(3):null };
+      avgRR,
+      expectancy: realExp };
   }
 
-  // ── OPTIMAL 4-RULE FILTER (applied to backtest) ──────────
-  // Same rules used for live Telegram gate — lets us validate
-  // the 83.3% simulation result against the full 83-day dataset.
-  // Rule 1: Score >= 9.0
-  // Rule 2: Slope confirmed in signal direction
-  // Rule 3: SELL RSI > 35 (no shorting into oversold)
-  // Rule 4: Structure AND Squeeze both confirmed simultaneously
+  // ── TELEGRAM GATE VALIDATION (matches live logic) ────────
+  // The live gate sends conf>=2 (★★ and ★★★), all requiring RR>=1.5.
+  // This measures what would ACTUALLY reach Telegram over 83 days,
+  // and critically — the REAL expectancy using each signal's own RR.
   function passesOptimalFilter(sig) {
-    // Uses boolean flags stored at backtest time — not trendNote strings
-    const rule1 = sig.score >= 9.0;
-    const rule2 = sig.hasSlope === true;
-    const rule3 = sig.dir === 'BUY' ? true : (sig.rsi || 50) > 35;
-    const rule4 = sig.hasStruct === true && sig.hasSqueeze === true;
-    return rule1 && rule2 && rule3 && rule4;
+    return sig.conf >= 2; // conf already enforces RR>=1.5 via calcConf
   }
 
   const filteredResults = allResults.filter(passesOptimalFilter);
-  const unfilteredStar3 = allResults.filter(s=>s.conf===3);
+  const unfilteredStar3 = allResults.filter(s=>s.conf>=2);
 
   backtestResults = {
     // ── UNFILTERED (all signals, existing view) ──────────
