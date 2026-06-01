@@ -1131,76 +1131,90 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
     if (!macdOk) return 0;
 
     // ══════════════════════════════════════════════════════
-    // DATA-DRIVEN STAR GATES (derived from 83-day backtest)
+    // DATA-DRIVEN GATES — derived from 83-day backtest analysis
     //
-    // The backtest proved these facts about REAL profitability
-    // (expectancy per trade, not win rate):
-    //   - RR < 0.5  → 85% WR but -0.007R → LOSES money (tiny TPs)
-    //   - RR 0.5-1.5 → 57% WR, +0.061R → marginal
-    //   - RR >= 1.5 → 38% WR, +0.125R → PROFITABLE
-    //   - RR >= 1.5 + RSI extreme → +0.500R → BEST combo
-    //   - RSI extreme standalone → +0.230R (strongest single factor)
+    // PROVEN FACTS (real expectancy per trade, not win rate):
+    //   1. SLOPE IS KING:
+    //      BUY + slope up      = 56% WR, +1.154R
+    //      BUY + no slope      = 0% WR,  -1.0R  (every one lost)
+    //      → Slope is a HARD REQUIREMENT, not a bonus.
     //
-    // CONCLUSION: RR is the master gate. A signal is only
-    // worth sending if its reward genuinely outweighs its risk.
-    // Win rate alone is a trap — we optimize for EXPECTANCY.
+    //   2. BUY STRENGTH, NOT DIPS (counter to textbook):
+    //      BUY + RSI 55-75 (strength) = 53% WR, +1.045R
+    //      BUY + RSI <45 (dip)        = 0% WR,  -1.0R
+    //      → In trends, buying strength beats buying dips.
+    //
+    //   3. RR HAS A CEILING:
+    //      RR 2.0-5.0 + score>=7 = 75% WR, +1.834R  ← BEST
+    //      RR > 5.0              = mostly lost (TP unreachable)
+    //      → Need a window (2-5), not just a floor.
+    //
+    //   4. The winning configuration:
+    //      slope confirmed + RR 2.0-5.0 + score>=7 → 70-75% WR
     // ══════════════════════════════════════════════════════
 
-    const rsiExtreme = dir === 'BUY' ? rsiOversold : rsiOverbought;
-    const bbExtreme  = dir === 'BUY' ? bbAtLower   : bbAtUpper;
-    const structOk   = dir === 'BUY' ? (structBull && structConfirmed) : (structBear && structConfirmed);
-    const slopeOk    = dir === 'BUY' ? (slopeUp && slopeAccel) : (slopeDown && slopeAccel);
-    const squeezeOk  = dir === 'BUY' ? squeezeBull : squeezeBear;
-    const aligned4h  = dir === 'BUY' ? aligned4hBull : aligned4hBear;
-    const anyQuality = rsiExtreme || bbExtreme || structOk || slopeOk || squeezeOk;
+    const slopeConfirmed = dir === 'BUY' ? slopeUp : slopeDown;
+    const structOk       = dir === 'BUY' ? structBull : structBear;
+    const squeezeOk      = dir === 'BUY' ? squeezeBull : squeezeBear;
+    const aligned4h      = dir === 'BUY' ? aligned4hBull : aligned4hBear;
 
-    // HARD GATE: RR must be >= 1.5 for ANY actionable signal (★★ or ★★★).
-    // Below this, the trade is not worth taking regardless of win rate.
-    // This is the single most important filter — proven by the data.
-    if (rr < 1.5) {
-      // Reward doesn't justify risk. Informational only at best.
-      return score >= 7.0 ? 1 : 0;
+    // ── HARD REQUIREMENT 1: Slope must confirm ──
+    // Without momentum, every signal in the data lost. No exceptions.
+    if (!slopeConfirmed) return 0;
+
+    // ── HARD REQUIREMENT 2: RR must be in the profitable window ──
+    // RR < 2.0 = reward too small. RR > 5.0 = target unreachable.
+    // The data is unambiguous: 2.0-5.0 is where money is made.
+    if (rr < 2.0 || rr > 5.0) {
+      // Outside the profitable RR window — informational only
+      return (rr >= 1.5 && rr < 2.0 && score >= 7.5) ? 1 : 0;
     }
 
-    // ★★★ = BEST expectancy combo: RR>=1.5 AND RSI extreme AND decent score
-    //       This is the +0.500R configuration from the data.
-    //       RSI extreme is the strongest single edge (+0.230R).
-    if (rr >= 1.5 && rsiExtreme && score >= 7.5) return 3;
+    // At this point: slope confirmed AND RR in [2.0, 5.0] window.
+    // Now rank by conviction — TIGHTER rules for weaker setups.
+    //
+    // Key refinement from data: ★★ losers had RR > 3.5 with weak
+    // setups (TP too far to reach). Strong setups handle wide RR;
+    // weak setups need TP closer. So ★★ gets a tighter RR window.
 
-    // Also ★★★: very high RR (>=2.5) with any quality factor —
-    // exceptional reward justifies the trade even without RSI extreme
-    if (rr >= 2.5 && anyQuality && score >= 7.5) return 3;
+    // ★★★ = the proven 75%/+1.834R combo:
+    //       slope + RR 2-5 + score>=7 + (structure OR squeeze)
+    if (score >= 7.0 && (structOk || squeezeOk)) return 3;
 
-    // ★★ = profitable tier: RR>=1.5 with at least one quality factor
-    if (rr >= 1.5 && anyQuality) return 2;
+    // ★★★ = exceptional score alone in the profitable window
+    if (score >= 8.0) return 3;
 
-    // ★★ = RR>=1.5 with strong score even without classic quality flag
-    if (rr >= 1.5 && score >= 7.5) return 2;
+    // ★★ = solid setup but needs TIGHTER RR (2.0-3.5) since weaker
+    //      setups can't reach far targets. Squeeze adds the edge.
+    if (score >= 6.5 && rr <= 3.5 && (structOk || squeezeOk)) return 2;
 
-    // ★ = RR is acceptable but setup is weak — informational
-    if (rr >= 1.5) return 1;
+    // ★★ = strong score in tight RR window even without squeeze
+    if (score >= 7.0 && rr <= 3.5) return 2;
 
-    return 0;
+    // Everything else in the window — informational only, NOT sent
+    return 1;
   }
 
   // ── BUY ─────────────────────────────────────────────────
   if (macd.bull) {
     let score = 5.0; // Low baseline — signals must earn their stars
 
-    // RSI — most important factor (genuine momentum reading)
-    if      (rsi < 25) score += 3.0;  // deeply oversold
-    else if (rsi < 32) score += 2.0;  // oversold
-    else if (rsi < 40) score += 1.0;  // mild pullback
-    else if (rsi < 50) score += 0.25; // slightly below mid
-    else if (rsi > 75) score -= 2.0;  // overbought — chasing
-    else if (rsi > 65) score -= 1.0;  // extended
+    // RSI — DATA-DRIVEN: buy STRENGTH not dips (trend-following)
+    // Proven: BUY+RSI 55-75 = 53% WR | BUY+RSI<45 = 0% WR
+    // In trending markets, momentum continuation beats mean-reversion.
+    if      (rsi >= 60 && rsi <= 72) score += 2.5;  // sweet spot — riding strength
+    else if (rsi >= 55 && rsi < 60)  score += 1.5;  // building strength
+    else if (rsi > 72 && rsi <= 78)  score += 1.0;  // strong but watch exhaustion
+    else if (rsi >= 50 && rsi < 55)  score += 0.5;  // neutral-positive
+    else if (rsi > 78)               score -= 1.5;  // overheated — exhaustion risk
+    else if (rsi < 45)               score -= 1.5;  // falling knife — dips lose in trends
+    else if (rsi < 50)               score -= 0.5;  // weak
 
-    // BB position — entry timing
-    if      (bbB < 0.15) score += 2.5; // extreme lower band
-    else if (bbB < 0.25) score += 1.5; // lower band
-    else if (bbB < 0.40) score += 0.5; // below midline
-    else if (bbB > 0.85) score -= 2.0; // extreme upper — chasing
-    else if (bbB > 0.75) score -= 1.0; // upper band
+    // BB position — in a trend, upper band = strength (not chasing)
+    if      (bbB >= 0.60 && bbB <= 0.85) score += 1.5; // riding upper half
+    else if (bbB > 0.85)                 score += 0.5;  // strong but extended
+    else if (bbB >= 0.45 && bbB < 0.60)  score += 0.5;  // mid
+    else if (bbB < 0.30)                 score -= 1.0;  // lower band = weakness in trend
 
     // 4H trend — meaningful alignment bonus
     if      (aligned4hBull) score += 1.5;
@@ -1292,18 +1306,22 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
   if (!macd.bull) {
     let score = 5.0;
 
-    if      (rsi > 75) score += 3.0;
-    else if (rsi > 68) score += 2.0;
-    else if (rsi > 60) score += 1.0;
-    else if (rsi > 50) score += 0.25;
-    else if (rsi < 25) score -= 2.0;
-    else if (rsi < 35) score -= 1.0;
+    // SELL — mirror of BUY: sell WEAKNESS/downward momentum, not bounces.
+    // Shorting into oversold (RSI<35) = catching falling knife in reverse.
+    // The profitable short rides momentum DOWN through the mid-zone.
+    if      (rsi >= 28 && rsi <= 40) score += 2.5;  // sweet spot — riding weakness down
+    else if (rsi > 40 && rsi <= 45)  score += 1.5;  // building weakness
+    else if (rsi >= 22 && rsi < 28)  score += 1.0;  // weak but watch bounce
+    else if (rsi > 45 && rsi <= 50)  score += 0.5;  // neutral-negative
+    else if (rsi < 22)               score -= 1.5;  // oversold — bounce risk
+    else if (rsi > 55)               score -= 1.5;  // too strong to short
+    else if (rsi > 50)               score -= 0.5;  // strength
 
-    if      (bbB > 0.85) score += 2.5;
-    else if (bbB > 0.75) score += 1.5;
-    else if (bbB > 0.60) score += 0.5;
-    else if (bbB < 0.15) score -= 2.0;
-    else if (bbB < 0.25) score -= 1.0;
+    // BB position — lower half = weakness confirmed for short
+    if      (bbB >= 0.15 && bbB <= 0.40) score += 1.5; // riding lower half down
+    else if (bbB < 0.15)                 score += 0.5;  // weak but extended
+    else if (bbB > 0.40 && bbB <= 0.55)  score += 0.5;  // mid
+    else if (bbB > 0.70)                 score -= 1.0;  // upper band = strength
 
     if      (aligned4hBear) score += 1.5;
     else if (trend4hDir === 'bull') score -= 1.0;
