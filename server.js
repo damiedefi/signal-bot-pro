@@ -85,13 +85,22 @@ function formatTGSignal(s, sig) {
   const closeNote = minsLeft <= 5
     ? '⚡ Candle closing now — enter at open of next candle'
     : `⏱ Candle closes in ~${minsLeft}m — wait for close before entering`;
+  // Calculate risk/reward percentages from actual levels
+  const entry = s.price;
+  const riskPct   = Math.abs((entry - sig.sl) / entry * 100).toFixed(2);
+  const tp1Pct    = Math.abs((sig.tp1 - entry) / entry * 100).toFixed(2);
+  const tp2Pct    = Math.abs((sig.tp2 - entry) / entry * 100).toFixed(2);
+  const rr        = sig.rr || (tp1Pct / riskPct).toFixed(2);
+  const rrEmoji   = rr >= 2.0 ? '✅' : rr >= 1.5 ? '👍' : '⚠️';
+
   return `${e} <b>${sig.dir} ${s.sym}/USDT</b>
 ${'⭐'.repeat(sig.conf)} Score: <b>${sig.score}/10</b>
 
-📍 Entry:    <b>${fmtP(s.price)}</b>
-🛑 Stop:     <b>${fmtP(sig.sl)}</b>
-🎯 TP1:      <b>${fmtP(sig.tp1)}</b>
-🎯 TP2:      <b>${fmtP(sig.tp2)}</b>
+📍 Entry:    <b>${fmtP(entry)}</b>
+🛑 Stop:     <b>${fmtP(sig.sl)}</b>  (−${riskPct}%)
+🎯 TP1:      <b>${fmtP(sig.tp1)}</b>  (+${tp1Pct}%)
+🎯 TP2:      <b>${fmtP(sig.tp2)}</b>  (+${tp2Pct}%)
+${rrEmoji} Risk/Reward: <b>${rr}:1</b>
 ⚡ Leverage: <b>${leverageFromScore(sig.score, sig.conf)}</b>
 
 ${sig.trendNote}
@@ -913,7 +922,107 @@ function getVolatilitySqueeze(candles) {
 // squeeze = additional context. TP1=3x ATR, TP2=5x ATR.
 // ══════════════════════════════════════════════════════════
 
-function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0, ls=null, ob=null, taker=null, sym='') {
+// ── CHART-BASED SL/TP LEVELS ─────────────────────────────
+// Instead of mechanical ATR multiples, place SL and TP at
+// REAL technical levels from the chart:
+//   SL  = just beyond nearest swing low (long) / high (short)
+//   TP1 = nearest significant resistance (long) / support (short)
+//   TP2 = next level beyond TP1
+// Then calculate REAL risk/reward from those actual levels.
+// ATR is used only as a small buffer to avoid noise stop-outs.
+//
+// Returns levels for BOTH directions plus the real RR ratio.
+function getChartLevels(candles, price, atr) {
+  if (!candles || candles.length < 30) {
+    // Fallback to ATR method if insufficient data
+    return {
+      buy:  { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' },
+      sell: { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' }
+    };
+  }
+
+  const recent = candles.slice(-60); // last 60 candles for level detection
+  const buffer = atr * 0.3; // small noise buffer beyond levels
+
+  // ── Find swing highs and swing lows (pivot points) ──
+  const swingHighs = [];
+  const swingLows  = [];
+  for (let i = 2; i < recent.length - 2; i++) {
+    const h = recent[i].high, l = recent[i].low;
+    // Swing high: higher than 2 candles each side
+    if (h > recent[i-1].high && h > recent[i-2].high &&
+        h > recent[i+1].high && h > recent[i+2].high) {
+      swingHighs.push(h);
+    }
+    // Swing low: lower than 2 candles each side
+    if (l < recent[i-1].low && l < recent[i-2].low &&
+        l < recent[i+1].low && l < recent[i+2].low) {
+      swingLows.push(l);
+    }
+  }
+
+  // ── Resistance levels above price, sorted ascending ──
+  const resistancesAbove = swingHighs.filter(h => h > price).sort((a,b) => a - b);
+  // ── Support levels below price, sorted descending ──
+  const supportsBelow = swingLows.filter(l => l < price).sort((a,b) => b - a);
+  // ── Levels for shorts: supports below (TP) and resistances above (SL) ──
+  const resistancesAboveAsc = swingHighs.filter(h => h > price).sort((a,b) => a - b);
+  const supportsBelowDesc = swingLows.filter(l => l < price).sort((a,b) => b - a);
+
+  // ══ BUY/LONG LEVELS ══
+  // SL = nearest swing low below price, minus buffer
+  // TP1 = nearest resistance above, TP2 = next resistance
+  let buySL, buyTP1, buyTP2, buyMethod;
+  const nearestSupport = supportsBelow[0];
+  const nearestRes1 = resistancesAbove[0];
+  const nearestRes2 = resistancesAbove[1];
+
+  if (nearestSupport && nearestRes1) {
+    buySL  = nearestSupport - buffer;
+    buyTP1 = nearestRes1;
+    buyTP2 = nearestRes2 || (nearestRes1 + (nearestRes1 - price)); // extrapolate if no 2nd level
+    buyMethod = 'chart';
+  } else {
+    // Fallback to ATR if levels not found
+    buySL  = price - atr*1.5;
+    buyTP1 = price + atr*3.0;
+    buyTP2 = price + atr*5.0;
+    buyMethod = 'atr';
+  }
+  const buyRisk   = price - buySL;
+  const buyReward = buyTP1 - price;
+  const buyRR     = buyRisk > 0 ? +(buyReward / buyRisk).toFixed(2) : 0;
+
+  // ══ SELL/SHORT LEVELS ══
+  // SL = nearest swing high above price, plus buffer
+  // TP1 = nearest support below, TP2 = next support
+  let sellSL, sellTP1, sellTP2, sellMethod;
+  const nearestResShort = resistancesAboveAsc[0];
+  const nearestSup1 = supportsBelowDesc[0];
+  const nearestSup2 = supportsBelowDesc[1];
+
+  if (nearestResShort && nearestSup1) {
+    sellSL  = nearestResShort + buffer;
+    sellTP1 = nearestSup1;
+    sellTP2 = nearestSup2 || (nearestSup1 - (price - nearestSup1));
+    sellMethod = 'chart';
+  } else {
+    sellSL  = price + atr*1.5;
+    sellTP1 = price - atr*3.0;
+    sellTP2 = price - atr*5.0;
+    sellMethod = 'atr';
+  }
+  const sellRisk   = sellSL - price;
+  const sellReward = price - sellTP1;
+  const sellRR     = sellRisk > 0 ? +(sellReward / sellRisk).toFixed(2) : 0;
+
+  return {
+    buy:  { sl: +buySL.toFixed(6),  tp1: +buyTP1.toFixed(6),  tp2: +buyTP2.toFixed(6),  rr: buyRR,  method: buyMethod },
+    sell: { sl: +sellSL.toFixed(6), tp1: +sellTP1.toFixed(6), tp2: +sellTP2.toFixed(6), rr: sellRR, method: sellMethod }
+  };
+}
+
+function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate=0, oi=null, fg=null, pct24h=0, ls=null, ob=null, taker=null, sym='', chartLevels=null) {
   const profile = getCoinProfile(sym);
   const results = [];
   const bbB = (bb.pctB > 0.05 && bb.pctB < 0.95) ? bb.pctB : 0.5;
@@ -988,14 +1097,24 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       const tkNoteB     = getTakerModifier(taker, 'BUY').label;
       const pmNoteB     = getPatternModifier(buyPatternKey).label;
       const extraData   = [fundingNoteB, oiNoteB, fgNoteB, lsNoteB, obNoteB, tkNoteB, pmNoteB].filter(Boolean).join(' · ');
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bull · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraData}`;
+      // Chart-based levels (real S/R) — fall back to ATR if unavailable
+      const lv = chartLevels?.buy || { sl: price - atr*1.5, tp1: price + atr*3.0, tp2: price + atr*5.0, rr: 2.0, method: 'atr' };
+      const rrNote = lv.rr >= 2.0 ? `✅ RR ${lv.rr}:1` : lv.rr >= 1.5 ? `RR ${lv.rr}:1` : `⚠️ RR ${lv.rr}:1 (low)`;
+      const levelNote = lv.method === 'chart' ? 'Chart levels' : 'ATR levels';
+
+      // MIN RR GATE — if chart says reward < 1.5x risk, downgrade
+      // The chart is telling us there isn't enough room. Cap at ★★.
+      let finalConf = conf;
+      if (lv.method === 'chart' && lv.rr < 1.5 && finalConf === 3) {
+        finalConf = 2; // downgrade — not enough room to justify high conviction
+      }
+
       results.push({
-        dir:'BUY', score, conf, aligned, trendNote,
+        dir:'BUY', score, conf: finalConf, aligned,
+        trendNote: `${trendNote} · ${levelNote} · ${rrNote}`,
         swing: score >= 7.0 ? 'BUY'  : 'WATCH',
         scalp: score >= 6.5 ? 'BUY'  : 'WATCH',
-        sl:  +(price - atr*1.5).toFixed(4),
-        tp1: +(price + atr*3.0).toFixed(4),
-        tp2: +(price + atr*5.0).toFixed(4)
+        sl:  lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
       });
     }
   }
@@ -1068,14 +1187,21 @@ function getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, price
       const tkNoteS     = getTakerModifier(taker, 'SELL').label;
       const pmNoteS     = getPatternModifier(sellPatternKey).label;
       const extraDataS  = [fundingNoteS, oiNoteS, fgNoteS, lsNoteS, obNoteS, tkNoteS, pmNoteS].filter(Boolean).join(' · ');
-      const trendNote = `${trend4hDir?(aligned?'4H aligned':'4H counter — reduce size'):'No 4H data'} · MACD bear · RSI ${rsi} · BB ${bb.pct}%${extras?' · '+extras:''} · ${extraDataS}`;
+      const lv = chartLevels?.sell || { sl: price + atr*1.5, tp1: price - atr*3.0, tp2: price - atr*5.0, rr: 2.0, method: 'atr' };
+      const rrNote = lv.rr >= 2.0 ? `✅ RR ${lv.rr}:1` : lv.rr >= 1.5 ? `RR ${lv.rr}:1` : `⚠️ RR ${lv.rr}:1 (low)`;
+      const levelNote = lv.method === 'chart' ? 'Chart levels' : 'ATR levels';
+
+      let finalConf = conf;
+      if (lv.method === 'chart' && lv.rr < 1.5 && finalConf === 3) {
+        finalConf = 2;
+      }
+
       results.push({
-        dir:'SELL', score, conf, aligned, trendNote,
+        dir:'SELL', score, conf: finalConf, aligned,
+        trendNote: `${trendNote} · ${levelNote} · ${rrNote}`,
         swing: score >= 7.0 ? 'SELL' : 'WATCH',
         scalp: score >= 6.5 ? 'SELL' : 'WATCH',
-        sl:  +(price + atr*1.5).toFixed(4),
-        tp1: +(price - atr*3.0).toFixed(4),
-        tp2: +(price - atr*5.0).toFixed(4)
+        sl:  lv.sl, tp1: lv.tp1, tp2: lv.tp2, rr: lv.rr, levelMethod: lv.method
       });
     }
   }
@@ -1119,7 +1245,10 @@ async function processPair(pair) {
     getTakerVolume(pair.sym)
   ]);
 
-  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h, ls, ob, taker, pair.sym);
+  // Calculate chart-based SL/TP levels from real swing highs/lows
+  const chartLevels = getChartLevels(candles1h, price, atr);
+
+  const signals = getSignals(rsi, macd, bb, volRatio, trend1h, trend4h, atr, price, priceStruct, emaSlope, squeeze, fundingRate, oi, fg, pct24h, ls, ob, taker, pair.sym, chartLevels);
   const topSig   = signals[0];
 
   const fundingInfo = topSig ? getFundingModifier(fundingRate, topSig.dir) : funding;
@@ -1320,8 +1449,7 @@ async function fetchHistoricalCandles(sym) {
     .filter(c=>c.close>0);
 }
 
-function checkOutcome(candles, fromIdx, signal) {
-  const { sl, tp1, dir } = signal;
+function checkOutcome(candles, fromIdx, dir, sl, tp1) {
   for (let i=fromIdx+1; i<Math.min(fromIdx+25,candles.length); i++) {
     const c=candles[i], h=i-fromIdx;
     if (dir==='BUY') {
@@ -1364,26 +1492,34 @@ async function runBacktest() {
         const es   = getEMASlope(c1h);
         const sq   = getVolatilitySqueeze(w1h);
         const price = w1h[w1h.length-1].close;
-        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price, ps, es, sq);
+        const cl = getChartLevels(w1h, price, atr);
+        const sigs = getSignals(rsi, macd, bb, 0.02, t1h, t4h, atr, price, ps, es, sq, 0, null, null, 0, null, null, null, pair.sym, cl);
         if (!sigs.length) continue;
         const sig = sigs[0];
-        const outcome = checkOutcome(candles, idx, sig);
-        // Store indicator flags so optimal filter can check them directly
-        const hasSlope = sig.dir === 'BUY'
-          ? (es?.direction === 'up')
-          : (es?.direction === 'down');
-        const hasStruct = sig.dir === 'BUY'
-          ? (ps?.structure === 'bull')
-          : (ps?.structure === 'bear');
-        const hasSqueeze = sig.dir === 'BUY'
-          ? (sq?.releasing && sq?.breakoutDir === 'bull')
-          : (sq?.releasing && sq?.breakoutDir === 'bear');
+
+        // ── HEAD-TO-HEAD: test CHART levels vs ATR levels ──
+        // Chart levels (what the signal actually carries now)
+        const chartOutcome = checkOutcome(candles, idx, sig.dir, sig.sl, sig.tp1);
+        const chartRR = sig.rr || 0;
+
+        // ATR levels (the old method) for the SAME signal
+        const atrSL  = sig.dir === 'BUY' ? price - atr*1.5 : price + atr*1.5;
+        const atrTP1 = sig.dir === 'BUY' ? price + atr*3.0 : price - atr*3.0;
+        const atrOutcome = checkOutcome(candles, idx, sig.dir, atrSL, atrTP1);
+
+        const hasSlope = sig.dir === 'BUY' ? (es?.direction === 'up') : (es?.direction === 'down');
+        const hasStruct = sig.dir === 'BUY' ? (ps?.structure === 'bull') : (ps?.structure === 'bear');
+        const hasSqueeze = sig.dir === 'BUY' ? (sq?.releasing && sq?.breakoutDir === 'bull') : (sq?.releasing && sq?.breakoutDir === 'bear');
 
         allResults.push({
           sym:pair.sym, dir:sig.dir, conf:sig.conf, score:sig.score,
           price, sl:sig.sl, tp1:sig.tp1, time:candles[idx].time,
           rsi, hasSlope, hasStruct, hasSqueeze,
-          ...outcome
+          // Chart-level outcome (primary)
+          result: chartOutcome.result, hours: chartOutcome.hours,
+          chartResult: chartOutcome.result, chartRR, chartMethod: sig.levelMethod,
+          // ATR-level outcome (comparison)
+          atrResult: atrOutcome.result, atrHours: atrOutcome.hours
         });
         lastIdx = idx;
       }
@@ -1457,10 +1593,63 @@ async function runBacktest() {
         rule4_struct_sqz: { blocked: unfilteredStar3.filter(s=>!(s.hasStruct&&s.hasSqueeze)).length }
       },
       recentFiltered: filteredResults.slice(-20).reverse()
-    }
+    },
+
+    // ── CHART LEVELS vs ATR LEVELS — HEAD TO HEAD ────────
+    // Same signals, two different exit strategies. This tells
+    // us definitively whether chart-based SL/TP beats ATR.
+    exitComparison: (function() {
+      function exitStats(results, field) {
+        const wins   = results.filter(s => s[field] === 'win');
+        const losses = results.filter(s => s[field] === 'loss');
+        const expired= results.filter(s => s[field] === 'expired');
+        const resolved = wins.length + losses.length;
+        const wr = resolved > 0 ? Math.round(wins.length/resolved*100) : null;
+        // Expectancy: chart uses real RR per trade, ATR is fixed 2:1
+        return { wins:wins.length, losses:losses.length, expired:expired.length,
+          resolved, winRate:wr };
+      }
+
+      // Compare on the ★★★ signals (the ones that actually fire)
+      const star3 = allResults.filter(s => s.conf === 3);
+
+      const chart = exitStats(star3, 'chartResult');
+      const atr   = exitStats(star3, 'atrResult');
+
+      // Average RR achieved by chart method
+      const chartRRs = star3.filter(s => s.chartRR > 0).map(s => s.chartRR);
+      const avgChartRR = chartRRs.length > 0
+        ? +(chartRRs.reduce((a,b)=>a+b,0)/chartRRs.length).toFixed(2) : 0;
+
+      // Real expectancy: chart method uses actual RR, ATR uses fixed 2.0
+      const chartExp = chart.resolved > 0
+        ? +((chart.winRate/100 * avgChartRR) - ((100-chart.winRate)/100 * 1.0)).toFixed(3) : null;
+      const atrExp = atr.resolved > 0
+        ? +((atr.winRate/100 * 2.0) - ((100-atr.winRate)/100 * 1.0)).toFixed(3) : null;
+
+      // How many used real chart levels vs fell back to ATR
+      const chartMethodCount = star3.filter(s => s.chartMethod === 'chart').length;
+      const atrFallbackCount  = star3.filter(s => s.chartMethod === 'atr').length;
+
+      return {
+        chartLevels: { ...chart, avgRR: avgChartRR, expectancy: chartExp },
+        atrLevels:   { ...atr, avgRR: 2.0, expectancy: atrExp },
+        chartMethodUsed: chartMethodCount,
+        atrFallbackUsed: atrFallbackCount,
+        verdict: (chartExp !== null && atrExp !== null)
+          ? (chartExp > atrExp ? 'CHART LEVELS BETTER' : chartExp < atrExp ? 'ATR LEVELS BETTER' : 'EQUAL')
+          : 'INSUFFICIENT DATA'
+      };
+    })()
   };
 
+  const ec = backtestResults.exitComparison;
   console.log('✅ Backtest done: ' + allResults.length + ' total signals');
+  console.log('━━━ EXIT COMPARISON (★★★ signals) ━━━');
+  console.log('CHART levels: ' + ec.chartLevels.winRate + '% WR | avg RR ' + ec.chartLevels.avgRR + ':1 | expectancy ' + ec.chartLevels.expectancy + 'R');
+  console.log('ATR levels:   ' + ec.atrLevels.winRate + '% WR | fixed RR 2:1 | expectancy ' + ec.atrLevels.expectancy + 'R');
+  console.log('VERDICT: ' + ec.verdict);
+  console.log('(Chart method used on ' + ec.chartMethodUsed + ' signals, ATR fallback on ' + ec.atrFallbackUsed + ')');
   console.log('★★★ unfiltered: ' + backtestResults.byStars[3].winRate + '% (' + backtestResults.byStars[3].wins + 'W/' + backtestResults.byStars[3].losses + 'L)');
   console.log('★★★ OPTIMAL FILTER: ' + backtestResults.optimalFilter.signals.winRate + '% (' + backtestResults.optimalFilter.signals.wins + 'W/' + backtestResults.optimalFilter.signals.losses + 'L) from ' + filteredResults.length + ' signals');
   console.log('Signal reduction: ' + backtestResults.optimalFilter.reductionPct + '% fewer signals sent to Telegram');
