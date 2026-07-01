@@ -15,10 +15,19 @@ app.use(express.static('public'));
 // preferred so history actually accumulates.
 let supabase = null;
 (function initSupabase() {
+  // DIAGNOSTIC — print exactly what the process sees so we can
+  // debug env var issues without guessing.
+  const allKeys = Object.keys(process.env);
+  const supabaseKeys = allKeys.filter(k => k.toUpperCase().includes('SUPA'));
+  console.log('🔍 ENV DIAGNOSTIC:');
+  console.log('   SUPABASE_URL present: ' + (process.env.SUPABASE_URL ? 'YES (len ' + process.env.SUPABASE_URL.length + ')' : 'NO'));
+  console.log('   SUPABASE_KEY present: ' + (process.env.SUPABASE_KEY ? 'YES (len ' + process.env.SUPABASE_KEY.length + ')' : 'NO'));
+  console.log('   CC_API_KEY present: ' + (process.env.CC_API_KEY ? 'YES' : 'NO'));
+  console.log('   Any keys containing SUPA: [' + supabaseKeys.join(', ') + ']');
   try {
     if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
       const { createClient } = require('@supabase/supabase-js');
-      supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+      supabase = createClient(process.env.SUPABASE_URL.trim(), process.env.SUPABASE_KEY.trim());
       console.log('✅ Supabase connected — data will persist permanently');
     } else {
       console.log('⚠️  Supabase not configured (SUPABASE_URL / SUPABASE_KEY missing) — using local file only');
