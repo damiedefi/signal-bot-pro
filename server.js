@@ -7,6 +7,70 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static('public'));
 
+// ── SUPABASE (permanent data storage) ────────────────────
+// Signals + outcomes are written here so they survive Railway
+// redeploys forever. Set SUPABASE_URL and SUPABASE_KEY env vars.
+// If not set, the bot still runs — it just falls back to the
+// local JSON file (which wipes on deploy). Supabase is strongly
+// preferred so history actually accumulates.
+let supabase = null;
+(function initSupabase() {
+  try {
+    if (process.env.SUPABASE_URL && process.env.SUPABASE_KEY) {
+      const { createClient } = require('@supabase/supabase-js');
+      supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+      console.log('✅ Supabase connected — data will persist permanently');
+    } else {
+      console.log('⚠️  Supabase not configured (SUPABASE_URL / SUPABASE_KEY missing) — using local file only');
+    }
+  } catch(e) {
+    console.log('⚠️  Supabase init failed: ' + e.message + ' — using local file only');
+  }
+})();
+
+// Write a new signal to Supabase (fire-and-forget, never blocks the bot)
+async function supabaseInsertSignal(entry) {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('signals').insert({
+      id: entry.id,
+      fired_at: entry.firedAt,
+      fired_str: entry.firedStr,
+      sym: entry.sym,
+      dir: entry.dir,
+      score: entry.score,
+      conf: entry.conf,
+      rsi: entry.rsi ?? null,
+      entry_price: entry.entryPrice,
+      sl: entry.sl,
+      tp1: entry.tp1,
+      tp2: entry.tp2,
+      rr: entry.rr ?? null,
+      regime: entry.regime ?? null,
+      funding_rate: entry.fundingRate ?? null,
+      trend_note: entry.trendNote,
+      final_result: entry.finalResult || 'pending',
+      pattern_key: entry.patternKey ?? null
+    });
+    if (error) console.log('Supabase insert error: ' + error.message);
+  } catch(e) { console.log('Supabase insert exception: ' + e.message); }
+}
+
+// Update a signal's outcome in Supabase when it resolves
+async function supabaseUpdateOutcome(entry) {
+  if (!supabase) return;
+  try {
+    const { error } = await supabase.from('signals').update({
+      check_1h: entry.check1H ?? null,
+      check_4h: entry.check4H ?? null,
+      check_24h: entry.check24H ?? null,
+      final_result: entry.finalResult,
+      resolved_at: entry.resolvedAt ?? null
+    }).eq('id', entry.id);
+    if (error) console.log('Supabase update error: ' + error.message);
+  } catch(e) { console.log('Supabase update exception: ' + e.message); }
+}
+
 // ── PAIRS ─────────────────────────────────────────────────
 const PAIRS = [
   { sym:'BTC',  cc:'BTC',  mcap:1.32e12 },
@@ -126,6 +190,34 @@ function saveLog(log) {
 
 let signalLog = loadLog();
 
+// On startup, recover full history from Supabase (survives redeploys).
+// This is the key benefit — after a Railway redeploy wipes the local
+// file, we reload everything from permanent storage.
+(async function recoverFromSupabase() {
+  if (!supabase) return;
+  try {
+    const { data, error } = await supabase
+      .from('signals')
+      .select('*')
+      .order('fired_at', { ascending: true })
+      .limit(3000);
+    if (error) { console.log('Supabase recovery error: ' + error.message); return; }
+    if (data && data.length) {
+      // Map DB rows back to internal shape
+      signalLog = data.map(r => ({
+        id: r.id, sym: r.sym, dir: r.dir, score: r.score, conf: r.conf,
+        rsi: r.rsi, rr: r.rr, regime: r.regime, fundingRate: r.funding_rate,
+        entryPrice: r.entry_price, sl: r.sl, tp1: r.tp1, tp2: r.tp2,
+        trendNote: r.trend_note, patternKey: r.pattern_key,
+        firedAt: r.fired_at, firedStr: r.fired_str,
+        check1H: r.check_1h, check4H: r.check_4h, check24H: r.check_24h,
+        finalResult: r.final_result, resolvedAt: r.resolved_at
+      }));
+      console.log('✅ Recovered ' + signalLog.length + ' signals from Supabase');
+    }
+  } catch(e) { console.log('Supabase recovery exception: ' + e.message); }
+})();
+
 // ── SELF-LEARNING PATTERN TRACKER ────────────────────────
 // The bot learns from its own results. Each resolved signal
 // updates a pattern database. Patterns that win get boosted,
@@ -217,16 +309,20 @@ function addSignalToLog(s, sig) {
   if (isDupe) return;
   const patternKey = buildPatternKey(s.sym, sig.dir, s.rsi, s.fundingRate || 0,
     sig.dir === 'BUY' ? (s.priceStruct?.structure === 'bull') : (s.priceStruct?.structure === 'bear'));
-  signalLog.push({
+  const entry = {
     id: now + '_' + s.sym + '_' + sig.dir,
     sym: s.sym, dir: sig.dir, score: sig.score, conf: sig.conf,
+    rsi: s.rsi, rr: sig.rr, regime: s.regime, fundingRate: s.fundingRate,
     entryPrice: s.price, sl: sig.sl, tp1: sig.tp1, tp2: sig.tp2,
     trendNote: sig.trendNote, patternKey,
     firedAt: now, firedStr: new Date(now).toUTCString().slice(0, 25),
     check1H: null, check4H: null, check24H: null, finalResult: 'pending'
-  });
-  if (signalLog.length > 500) signalLog = signalLog.slice(-500);
+  };
+  signalLog.push(entry);
+  if (signalLog.length > 3000) signalLog = signalLog.slice(-3000); // raised from 500 for monthly analysis
   saveLog(signalLog);
+  // Write to permanent storage (non-blocking)
+  supabaseInsertSignal(entry);
 }
 
 function calcPnL(entry, currentPrice) {
@@ -273,6 +369,7 @@ async function updateSignalLog(pairData) {
       }
       const emoji = entry.finalResult === 'win' ? '✅' : entry.finalResult === 'loss' ? '❌' : '⏰';
       await sendTelegram(`${emoji} <b>Signal Result: ${entry.finalResult.toUpperCase()}</b>\n\n<b>${entry.dir} ${entry.sym}/USDT</b>\nEntry: ${fmtP(entry.entryPrice)} → Now: ${fmtP(price)}\nP&L: <b>${pnl > 0 ? '+' : ''}${pnl}%</b>\n\n🤖 Defi Insider Signal Bot`);
+      supabaseUpdateOutcome(entry); // persist outcome
     }
     if (entry.finalResult === 'pending') {
       const earlyResult = checkResult(entry, price);
@@ -285,6 +382,7 @@ async function updateSignalLog(pairData) {
         const hours = (elapsed / 3600000).toFixed(1);
         const emoji = earlyResult === 'win' ? '✅' : '❌';
         await sendTelegram(`${emoji} <b>Signal ${earlyResult.toUpperCase()}</b> (${hours}H)\n\n<b>${entry.dir} ${entry.sym}/USDT</b>\nP&L: <b>${pnl > 0 ? '+' : ''}${pnl}%</b>\n\n🤖 Defi Insider Signal Bot`);
+        supabaseUpdateOutcome(entry); // persist outcome
       }
     }
   }
@@ -355,9 +453,13 @@ const pairCache = {};
 
 async function fetchCC(sym) {
   const { default: fetch } = await import('node-fetch');
-  const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=200`;
+  // CryptoCompare now requires an API key (policy change, June 2026).
+  // Set CC_API_KEY env var on Railway. Works without one only at
+  // severely throttled rate — expect 401s if not set.
+  const keyParam = process.env.CC_API_KEY ? `&api_key=${process.env.CC_API_KEY}` : '';
+  const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=320${keyParam}`; // raised from 200 — regime detector needs >=55 4H candles (320/4=80, safe margin)
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}${res.status===401?' (missing/invalid CC_API_KEY)':''}`);
   const json = await res.json();
   if (json.Response !== 'Success') throw new Error(json.Message || 'CC error');
   return json.Data.Data
@@ -1650,9 +1752,18 @@ app.post('/api/trade-alert', async (req, res) => {
 
 app.get('/api/health', async (req, res) => {
   try {
-    const candles = await fetchCC('BTC');
+    // Use getCandles (fallback-aware: CC -> CG -> stale cache) so health
+    // reflects TRUE system status, not just whether CryptoCompare alone works.
+    // Also test each source directly so we know exactly what's broken.
+    const sourceStatus = {};
+    try { await fetchCC('BTC'); sourceStatus.cryptoCompare = 'ok'; }
+    catch(e) { sourceStatus.cryptoCompare = 'FAILED: ' + e.message; }
+    try { await fetchCG('BTC'); sourceStatus.coinGecko = 'ok'; }
+    catch(e) { sourceStatus.coinGecko = 'FAILED: ' + e.message; }
+
+    const { candles1h: candles } = await getCandles('BTC');
     const price = candles[candles.length-1]?.close;
-    res.json({ ok:true, source:'CryptoCompare', btcPrice:'$'+price?.toLocaleString(),
+    res.json({ ok:true, sourceStatus, ccKeySet: !!process.env.CC_API_KEY, btcPrice:'$'+price?.toLocaleString(),
       pairs:PAIRS.map(p=>p.sym), cached:Object.keys(pairCache),
       nearCandleClose: isNearCandleClose(),
       minutesToClose: minutesToCandleClose(),
@@ -1670,9 +1781,10 @@ let backtestRunning = false;
 
 async function fetchHistoricalCandles(sym) {
   const { default: fetch } = await import('node-fetch');
-  const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=2000`;
+  const keyParam = process.env.CC_API_KEY ? `&api_key=${process.env.CC_API_KEY}` : '';
+  const url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=${sym}&tsym=USD&limit=2000${keyParam}`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}${res.status===401?' (missing/invalid CC_API_KEY)':''}`);
   const json = await res.json();
   if (json.Response !== 'Success') throw new Error(json.Message || 'CC error');
   return json.Data.Data
@@ -1898,6 +2010,76 @@ async function runBacktest() {
 
 // ── PATTERN INSIGHTS ENDPOINT ────────────────────────────
 // Shows what the bot has learned — which patterns win and lose
+// ── FULL SIGNAL LOG DUMP ─────────────────────────────────
+// Returns the complete stored signal history (up to retention cap)
+// so we can analyze real live performance, not just backtest sims.
+app.get('/api/full-log', (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 3000, 3000);
+  const resolved = signalLog.filter(s => s.finalResult && s.finalResult !== 'pending');
+  const pending = signalLog.filter(s => !s.finalResult || s.finalResult === 'pending');
+  res.json({
+    ok: true,
+    totalStored: signalLog.length,
+    resolvedCount: resolved.length,
+    pendingCount: pending.length,
+    oldestSignal: signalLog[0]?.firedStr || null,
+    newestSignal: signalLog[signalLog.length-1]?.firedStr || null,
+    signals: signalLog.slice(-limit)
+  });
+});
+
+// ── LIVE PERFORMANCE STATS ───────────────────────────────
+// Real outcomes from actual signals sent — the true test of
+// whether the backtest-tuned formula holds up live.
+// Mirrors the backtest stats shape so the two can be compared directly.
+app.get('/api/live-stats', (req, res) => {
+  function stats(sigs) {
+    const wins = sigs.filter(s => s.finalResult === 'win');
+    const losses = sigs.filter(s => s.finalResult === 'loss');
+    const resolved = wins.length + losses.length;
+    let realExp = null;
+    if (resolved > 0) {
+      let total = 0;
+      for (const s of sigs) {
+        if (s.finalResult === 'win') total += (s.rr || 2.0);
+        else if (s.finalResult === 'loss') total -= 1;
+      }
+      realExp = +(total / resolved).toFixed(3);
+    }
+    return {
+      total: sigs.length, wins: wins.length, losses: losses.length,
+      expired: sigs.filter(s => s.finalResult === 'expired').length,
+      resolved,
+      winRate: resolved > 0 ? Math.round(wins.length / resolved * 100) : null,
+      expectancy: realExp
+    };
+  }
+
+  const resolved = signalLog.filter(s => s.finalResult && s.finalResult !== 'pending');
+
+  res.json({
+    ok: true,
+    dateRange: {
+      oldest: signalLog[0]?.firedStr || null,
+      newest: signalLog[signalLog.length-1]?.firedStr || null
+    },
+    overall: stats(resolved),
+    byStars: {
+      3: stats(resolved.filter(s => s.conf === 3)),
+      2: stats(resolved.filter(s => s.conf === 2)),
+      1: stats(resolved.filter(s => s.conf === 1))
+    },
+    byDir: {
+      BUY: stats(resolved.filter(s => s.dir === 'BUY')),
+      SELL: stats(resolved.filter(s => s.dir === 'SELL'))
+    },
+    byPair: Object.fromEntries(
+      PAIRS.map(p => [p.sym, stats(resolved.filter(s => s.sym === p.sym))])
+    ),
+    note: 'This is REAL live outcome data — compare against /api/backtest to see if the formula holds up outside simulation.'
+  });
+});
+
 app.get('/api/patterns', (req, res) => {
   const patterns = Object.entries(patternDB)
     .map(([key, p]) => {
