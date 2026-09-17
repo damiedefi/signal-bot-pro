@@ -1,0 +1,28 @@
+{
+  "lookback": 320,
+  "horizonHours": 24,
+  "rrMin": 2,
+  "rrMax": 5,
+  "weakRRMax": 3.5,
+  "regimeSlopePct": 0.15,
+  "allowNeutral": true,
+  "coinBias": true,
+  "strictQuality": false,
+  "actualSqueezeRelease": false,
+  "maxTargetATR": null,
+  "minStopATR": 0,
+  "rejectObstructed": false,
+  "exitMode": "chart",
+  "directions": [
+    "BUY",
+    "SELL"
+  ],
+  "feeBps": 5.5,
+  "slippageBps": 2,
+  "spreadBps": 2,
+  "fundingBpsPer8h": 1,
+  "ambiguity": "stop-first",
+  "minRatingSamples": 50,
+  "minRatingBlocks": 12,
+  "blockDays": 7
+}

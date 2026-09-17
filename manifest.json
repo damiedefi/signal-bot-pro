@@ -1,0 +1,43 @@
+{
+  "project": "Defi Insider Signal Bot",
+  "version": "6.0.0",
+  "engineHash": "55b763a73048b0a16a73de7dc45d28e2fc36c4402d564c7f983494e0015ed578",
+  "mode": "paper",
+  "historicalProfitabilityValidated": false,
+  "originalInputsSHA256": {
+    "server.js": "740196f4004c58e0e6e0aa73ece09ca60c19ffd00a256719bb08c3a8f7faa32e",
+    "SIGNAL-BOT-FULL-CONTEXT.md": "071acab6de239e0d003a86ef56a90f88ef625877998cc8641623317f5d60ee16"
+  },
+  "files": {
+    ".env.example": "9d71f6ff9039faaa6847c845cb1c2493a5f56fe7a7b346108fc463417fc134b2",
+    ".gitignore": "59cc83c572bcf9cf8385e2824656bb55ba6162d00be85d0ee78075ac1e17e020",
+    "README.md": "be59ecd7dbf3857c9ae18c114a6cd333e825a5428ac873f1bd9dbb58bd16583b",
+    "RESEARCH.md": "6bb7d637ccfdf0c03aaeb06f20d877a15bf0c026a032c3af279fd10133f2dc1c",
+    "SIGNAL-BOT-FULL-CONTEXT.md": "aeb5d909b983b015194ce9cfe1af49877eb1124fb43b97cf0fecff98b1398369",
+    "VALIDATION.md": "c75057dd1829ab730d41d0b9de57e68403809bf66cc9696ef9f3c930cb0ffc59",
+    "package.json": "c795808b96376576997984d972f1483e98ea9b7e7d15babc64b33061bcdd6803",
+    "public/app.js": "6f42f3426432e5033d33efd3704f34a92b9e0007a89ec695a11349efebb635f4",
+    "public/favicon.svg": "1509a407a4f440deec1bfc07228d322bd495eb9198d527d9bf44edbcc12f22cb",
+    "public/index.html": "e5a8789969e449c48ee4c3d1859ed92c30de4b8ac8e872d62d480c465704be16",
+    "public/style.css": "1871125308a91624d3d0190c05d112eab19f96478e3a07f791be0eb77b1657f5",
+    "reports/candidate-replay-verification.json": "990e39a8b9cc9d34cb04e575ee279c575d9b1863912bed27b2359df22ccd1f97",
+    "reports/dashboard-verification.json": "71dd703bb6978eac8458a35c60657b1025d192995e216c18f4afc636fe171883",
+    "reports/package-smoke.json": "1b4e3f49613989146e77d89f6331eb1844a2ba3a63eebe8a928d9b913d949d3c",
+    "reports/replay-verification.json": "3ab03feb061dfb61bb1111225c0df035fac23ba9979a8d483d0e102f4f08c0f8",
+    "reports/schema-verification.json": "62219e820425a8f2ad11b47938902f5a2d277abd2a2cea10c01bc16b32f15d64",
+    "reports/suite-verification.json": "def19dbb21e43b7f1116c8d98d736704b0b9f17570830c12fb973c9e453dd4bf",
+    "reports/tests.tap": "97492106335aa4d58be687bf0222f5182838e22533ef80573c2580bcdcd65e58",
+    "reports/verification-summary.json": "2b4bf086de837b4b5cf640f542178ce30945bd1c3e2a6fb9a6aba227334a6afc",
+    "schema.sql": "1317b40bf45dc91bacd587c3d4d8437df5242fb4bd61f437ef33ff3ff318bc34",
+    "scripts/verify-dashboard.js": "3557315734695905d8ac8a80062e17cd353701de22094bb19535f522ce22407b",
+    "scripts/verify-replay.js": "e47233a8dcaf0c46ffdc8405699e0e100e79d00eab7ce9515097051ae877eca0",
+    "scripts/verify-schema.js": "4a38b8ad50aaad859d474ef84b9259d36027ab62463bcd0a9dccb250935dbc78",
+    "scripts/verify-suite.js": "f888a1c03242a0c0f794675443b5cf08c5516d1a460569ec57f87432371e5c5c",
+    "server.js": "55b763a73048b0a16a73de7dc45d28e2fc36c4402d564c7f983494e0015ed578",
+    "strategy-candidate.json": "e3de4ddb2ef3b8ce8bf2dc6ea3a13fc746e1ea28ddd4c114d474b378bc8730ca",
+    "strategy-corrected-control.json": "18b558546d85503771404b0f913ddbdb612f7a06e1cd239b10ba6881a742106c",
+    "test/engine.test.js": "8d6f19c74ed29749888b4589ce3e045463bb5feae5686ef2b568b392fdcf2e34",
+    "test/fixtures.js": "615f809b47a36c4532b5d3e47ce171a22d01f0e57d65efe9493265c8384a64e8",
+    "test/infrastructure.test.js": "92eaf89a763036653745184e43edd71f5e731d9f385fa9fd382bdf9c5cda397d"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "defi-insider-signal-bot",
+  "version": "6.0.0",
+  "private": true,
+  "description": "Deterministic crypto signal research and forward paper recorder",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check server.js && node --check public/app.js",
+    "verify:replay": "node scripts/verify-replay.js"
+  }
+}
