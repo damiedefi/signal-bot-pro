@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Defi Insider · Signal research</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <a class="brand" href="/" aria-label="Defi Insider home"
+          ><span class="mark" aria-hidden="true">D/</span
+          ><span>DEFI INSIDER<small>SIGNAL RESEARCH</small></span></a
+        >
+        <div class="header-right">
+          <span class="pill">PAPER ONLY</span
+          ><button id="refresh" type="button">Refresh</button>
+        </div>
+      </header>
+      <main>
+        <div class="intro">
+          <div>
+            <p class="eyebrow">THE RECORDER</p>
+            <h1>Evidence before conviction.</h1>
+            <p class="subhead">
+              Track every decision. Judge every trade in net R.
+            </p>
+          </div>
+          <p id="updated" class="updated">Connecting…</p>
+        </div>
+        <div id="notice" class="notice" role="status">
+          Loading recorder status…
+        </div>
+        <form id="access" class="access" hidden>
+          <label for="read-token">Read access token</label
+          ><input
+            id="read-token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Token for this session"
+          /><button type="submit">Connect</button
+          ><span>Kept in memory for this tab only.</span>
+        </form>
+        <section aria-label="Current policy performance" class="metrics">
+          <article>
+            <h2>Net expectancy</h2>
+            <strong id="expectancy">—</strong>
+            <p>R per resolved paper trade</p>
+          </article>
+          <article>
+            <h2>Total net R</h2>
+            <strong id="total-r">—</strong>
+            <p id="trade-count">No resolved trades yet</p>
+          </article>
+          <article>
+            <h2>Open positions</h2>
+            <strong id="pending">—</strong>
+            <p>One position per pair</p>
+          </article>
+          <article>
+            <h2>Closed-trade drawdown</h2>
+            <strong id="drawdown">—</strong>
+            <p>In R · excludes open P&amp;L</p>
+          </article>
+        </section>
+        <section class="panel" aria-labelledby="market-title">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">12 PAIRS · HOURLY DECISIONS</p>
+              <h2 id="market-title">Market watch</h2>
+            </div>
+            <label class="select-label" for="pair-filter"
+              >Show
+              <select id="pair-filter">
+                <option value="all">All pairs</option>
+                <option value="BUY">BUY setups</option>
+                <option value="SELL">SELL setups</option>
+                <option value="unavailable">Unavailable</option>
+              </select></label
+            >
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Pair</th>
+                  <th scope="col" class="number">Last closed price</th>
+                  <th scope="col" class="number">24h</th>
+                  <th scope="col">Regime</th>
+                  <th scope="col">Setup</th>
+                  <th scope="col">Quality</th>
+                  <th scope="col">Decision</th>
+                </tr>
+              </thead>
+              <tbody id="pairs"></tbody>
+            </table>
+          </div>
+          <p class="table-note">
+            Unrated means the cohort has not passed expectancy calibration. A
+            setup can be filtered or already occupied.
+          </p>
+        </section>
+        <div class="two-column">
+          <section class="panel" aria-labelledby="direction-title">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">SAME POLICY · SAME SOURCE</p>
+                <h2 id="direction-title">Direction evidence</h2>
+              </div>
+            </div>
+            <div id="directions" class="direction-grid"></div>
+            <p class="table-note">
+              SELL remains research only. A bull-market result does not
+              establish a short-side edge.
+            </p>
+          </section>
+          <section class="panel" aria-labelledby="recorder-title">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">RECORDING STATUS</p>
+                <h2 id="recorder-title">Data &amp; validation</h2>
+              </div>
+            </div>
+            <dl id="recorder"></dl>
+            <p class="table-note">
+              Paper entries model the next hourly open with configured costs.
+              They are not exchange fills.
+            </p>
+          </section>
+        </div>
+        <section class="panel" aria-labelledby="trades-title">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">LATEST 100 · CURRENT POLICY</p>
+              <h2 id="trades-title">Paper trade journal</h2>
+            </div>
+            <span id="cost-note" class="muted">Costs included in net R</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Entry · UTC</th>
+                  <th scope="col">Pair</th>
+                  <th scope="col">Side</th>
+                  <th scope="col" class="number">Entry</th>
+                  <th scope="col" class="number">Stop</th>
+                  <th scope="col" class="number">TP1</th>
+                  <th scope="col">Outcome</th>
+                  <th scope="col" class="number">Net R</th>
+                </tr>
+              </thead>
+              <tbody id="trades"></tbody>
+            </table>
+          </div>
+        </section>
+        <section class="lab-strip" aria-label="Backtest status">
+          <div>
+            <p class="eyebrow">SEPARATE RESEARCH LAB</p>
+            <p id="lab-status">No backtest has run in this process.</p>
+          </div>
+          <p>Historical experiments never change the recorder’s policy.</p>
+        </section>
+      </main>
+      <footer>
+        <span>DEFI INSIDER <span id="version">6.0</span></span
+        ><span>Expectancy over win rate. No profitability claim.</span>
+      </footer>
+    </div>
+  </body>
+</html>
